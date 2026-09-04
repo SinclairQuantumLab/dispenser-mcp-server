@@ -17,11 +17,9 @@ See the exact [pressure contract](docs/pressure-observation-contract.md),
 
 ## Quick start from source
 
-This Python repository runs on any supported host with Git and `uv`. First
-commissioning is read-only: keep control disabled, and never commit `.env` or
-the populated gateway-authentication file. Control-enabled commissioning is
-currently blocked pending completion of the durable-HIL crash-consistency
-review.
+This Python repository runs on any supported host with Git, `uv`, and Python
+3.13. First commissioning is read-only. Keep `control_enabled = false`, and
+never commit the populated gateway-authentication file.
 
 ```sh
 git clone --recurse-submodules https://github.com/SinclairQuantumLab/dispenser-mcp-server.git
@@ -34,30 +32,26 @@ The recursive clone checks out the pinned `py-siglent-spd3000` source, and
 declared in `pyproject.toml`. If `uv` is missing, follow its
 [official installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
 
-Create the two untracked local configuration files:
+Edit the two nonsecret instrument settings files and the main safety/transport
+settings file:
 
-```sh
-cp .env.example .env
-cp settings/py-siglent-spd3000-gateway-auth.toml.template \
-  settings/py-siglent-spd3000-gateway-auth.toml
+```text
+settings/mcp-settings.toml
+settings/hicube-neo-client-settings.toml
+settings/py-siglent-spd3000/gateway-settings.toml
 ```
 
-On PowerShell, use `Copy-Item` for the same two copies. Restrict both populated
-files to the service account before a persistent deployment. Edit the files as
-the operator. Remove or comment the optional Windows example lines for
-`DISPENSER_HICUBE_CLIENT_FILE` and
-`DISPENSER_SIGLENT_GATEWAY_AUTH_FILE` to use the repository defaults. Set
-`DISPENSER_SIGLENT_DRIVER_SRC` to the absolute
-`dependencies/py-siglent-spd3000/src` path; fill the endpoint, model, serial,
-compliance, and truthful acceptance-context placeholders; put only the gateway
-token in the auth TOML; and leave `DISPENSER_SIGLENT_CONTROL_ENABLED=false` for
-the first start.
+Copy `settings/py-siglent-spd3000/gateway-auth.toml.template` to
+`settings/py-siglent-spd3000/gateway-auth.toml`, restrict it to the operator or
+service identity, and insert only the gateway token. The populated file is
+ignored by Git. Fill every placeholder in the three nonsecret TOMLs and leave
+`control_enabled = false` for the first start.
 
 Validate and start with the same commands on every supported host:
 
 ```sh
-uv run --env-file .env python -m dispenser_conditioning_mcp.deployment_check
-uv run --env-file .env dispenser-conditioning-mcp
+uv run python -m dispenser_conditioning_mcp.deployment_check
+uv run dispenser-conditioning-mcp
 ```
 
 During first commissioning, call only `read_vacuum_pressure` and
@@ -105,8 +99,8 @@ by two before the native CH1 current setpoint is written. The returned
 measured load current**. Only the native CH1 current measurement is returned;
 parallel load-current measurement semantics remain hardware-unverified.
 
-Every target is bounded by the lower of the operator ceiling, the topology
-ceiling, and the hard workflow ceiling of 4.8 A. Under `parallel_ch1`, every
+Every target is bounded by the fixed 4.8 A deployment/workflow ceiling and the
+topology hardware ceiling. Under `parallel_ch1`, every
 positive increase must equal 0.2 A of commanded load current, which maps to a
 0.1 A native CH1 step. Decreases are allowed. Live voltage must still match the
 fixed compliance voltage before and
@@ -141,8 +135,9 @@ Never use `unloaded_hil` for a connected dispenser.
 
 `unloaded_hil` also activates deterministic durable operation-state control and
 a measured-current trip. Before any mutating request can open a device session,
-the controller commits a pending-operation marker to the protected startup-bound
-state file. After every completed mutating power operation, it performs a
+the controller commits a pending-operation record and a separate pending guard
+in the protected startup-bound state directory. After every completed mutating
+power operation, it performs a
 separate fresh native-CH1 measured-current query. A finite value in the inclusive
 fixed band `[-0.001 A, +0.001 A]` is accepted. One finite sample outside that
 band trips immediately; there is no energized averaging or debounce. A read
@@ -157,13 +152,16 @@ device session is opened. This also applies to a valid write-free compare-and-se
 replay. `read_dispenser_power_state` remains write-free and exposes `unlatched`,
 `latched`, or `unavailable_fail_closed` diagnostics.
 
-Only a safely completed operation with a fresh in-band measurement supersedes
-its pending marker with a completed-operation record. A crash, unfinished call,
-uncertain write, trip-record persistence failure, or completion-record failure
-leaves durable fail-closed state. After restart, every mutation is rejected before
-a device session opens. Trip recovery commands and verifies the two-channel
-shutdown before attempting to replace the already-durable pending marker with a
-trip record, so hardware shutdown does not wait on trip-record persistence.
+Only a safely completed operation with a fresh in-band measurement publishes and
+verifies a completed-operation record before retiring its pending guard. A
+failure before that durable publication leaves the guard authoritative. If
+guard-retirement durability is uncertain after successful publication, a crash
+can only restore the guard and make restart more restrictive. A crash,
+unfinished call, uncertain write, trip-record persistence failure, or reported
+completion-record failure therefore leaves a fresh process fail-closed before
+device access. Trip recovery commands and verifies the two-channel shutdown
+before attempting to replace the already-durable pending state with a trip
+record, so hardware shutdown does not wait on trip-record persistence.
 
 On Windows, atomic state-file replacement retries only transient access, sharing,
 or lock conflicts (`WinError 5`, `32`, or `33`) with four fixed delays totaling
@@ -214,9 +212,8 @@ uv run pytest
 The canonical Siglent driver is the Git submodule at
 `dependencies/py-siglent-spd3000`, pinned by this repository's gitlink. `uv
 sync` installs it as an editable local path dependency together with all of its
-declared dependencies. The MCP still imports the exact submodule `src` path
-selected in operator configuration; no driver wheel or separate editable-install
-command is needed during research and development.
+declared dependencies. Runtime loads that fixed submodule `src` directory; no
+driver path setting, driver wheel, or separate install command is needed.
 
 The canonical HiCube integration is the byte-for-byte vendored
 `dependencies/hicube/hicube_neo_client.py`. Its upstream commit and exact hash
@@ -227,11 +224,11 @@ All automated tests use injected fakes. They do not contact hardware, resolve
 configured device hosts, scan a network, read credentials, or run the Siglent
 driver's hardware-marked acceptance tests.
 
-After setting the operator environment below with control disabled, open the
-interactive MCP Inspector with:
+After completing the TOML settings with control disabled, open the interactive
+MCP Inspector with:
 
 ```powershell
-uv run mcp dev src/dispenser_conditioning_mcp/app.py:mcp
+uv run mcp dev src/dispenser_conditioning_mcp/configured_app.py:mcp
 ```
 
 The release audit also uses Inspector 2.5.0 CLI `tools/list --strict` through an
@@ -239,61 +236,38 @@ operator-local config; see [the verification report](docs/verification-report.md
 
 ## Operator startup configuration
 
-The process must receive both integration settings and an explicit safety
-policy. Missing or invalid required values deny startup. `control_enabled=false`
-allows state reads while rejecting every power write before a driver session is
-opened.
+Package 0.6.0 replaces the environment-variable operator interface with three
+strict, closed TOML documents. Missing files, missing required values,
+placeholders, unknown keys, wrong TOML types, and invalid ranges deny startup
+before any device connection. The six tools, their schemas, structured results,
+literals, and safety semantics remain public tool contract v0.4.3.
 
-Package 0.5.1 changes only startup transport/deployment support and repairs the
-dedicated-host dependency, base-runtime provenance, ACL, and owner installation
-boundaries. Its independently authenticated Python-payload manifest is narrowly
-scoped to the dependency lock, runtime inventory, MCP wheel, and exact
-wheelhouse. Other deployment tools, external integrations, configuration, and
-the base runtime retain separate operator-owned hash/provenance approvals. The
-six tools, their schemas, structured results, literals, and power semantics
-remain the public tool contract documented as v0.4.3 for simulator and assembler
-compatibility.
+| File | Operator settings |
+| --- | --- |
+| `settings/mcp-settings.toml` | Explicit acceptance context, expected PSU serial, fixed compliance voltage, control flag, transport, optional protected unloaded-HIL state path, and optional reviewed loopback HTTP table |
+| `settings/hicube-neo-client-settings.toml` | HiCube host, port (default 4840), and timeout (default 5 s) |
+| `settings/py-siglent-spd3000/gateway-settings.toml` | Gateway identifier, timeout (default 5 s), and minimum command interval (default 100 ms) |
 
-| Variable | Required | Contract |
-| --- | --- | --- |
-| `DISPENSER_MCP_TRANSPORT` | no | Exact `stdio` or `streamable-http`; omitted means backward-compatible stdio |
-| `DISPENSER_MCP_HTTP_BIND_HOST` | HTTP only | Optional explicit loopback host; default `127.0.0.1` |
-| `DISPENSER_MCP_HTTP_PORT` | HTTP only | Optional 1024–65535; default `8000` |
-| `DISPENSER_MCP_HTTP_PATH` | HTTP only | Optional fixed path; default `/mcp` |
-| `DISPENSER_MCP_HTTP_TRUST_MODE` | HTTP only | `loopback_only`, `authenticated_ssh_tunnel`, or `authenticated_reverse_proxy` |
-| `DISPENSER_MCP_HTTP_ALLOWED_HOSTS` | reverse proxy only | Comma-separated exact Host values; no wildcard |
-| `DISPENSER_MCP_HTTP_ALLOWED_ORIGINS` | reverse proxy only | Optional comma-separated exact HTTPS origins; no wildcard |
-| `DISPENSER_HICUBE_CLIENT_FILE` | no in this development checkout; yes for other layouts | Absolute commissioned client path; omission uses `dependencies/hicube/hicube_neo_client.py` |
-| `DISPENSER_HICUBE_HOST` | yes | Bare configured host/IP; no URL, CIDR, or embedded port |
-| `DISPENSER_HICUBE_PORT` | no | OPC UA port, default `4840` |
-| `DISPENSER_HICUBE_TIMEOUT_S` | no | `0.1`–`60`, default `5.0` |
-| `DISPENSER_SIGLENT_DRIVER_SRC` | yes | Absolute `dependencies/py-siglent-spd3000/src` directory containing `siglent_spd3000/__init__.py` |
-| `DISPENSER_SIGLENT_CONNECTION` | yes | Exact fixed value `gateway` |
-| `DISPENSER_SIGLENT_IDENTIFIER` | yes | Operator-configured authenticated gateway resource |
-| `DISPENSER_SIGLENT_GATEWAY_AUTH_FILE` | no in this development checkout; yes for other layouts | Absolute untracked auth path; omission uses `settings/py-siglent-spd3000-gateway-auth.toml` |
-| `DISPENSER_SIGLENT_TIMEOUT_S` | no | `0.1`–`60`, default `5.0` |
-| `DISPENSER_SIGLENT_MIN_COMMAND_INTERVAL_MS` | no | `10`–`100`, default `100` |
-| `DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT` | yes | `production_dispenser` or `unloaded_hil`; selects the one enable confirmation schema |
-| `DISPENSER_SIGLENT_UNLOADED_HIL_STATE_FILE` | for `unloaded_hil` only | Absolute protected JSON operation/trip state path; rejected for production context and never exposed to MCP |
-| `DISPENSER_SIGLENT_TOPOLOGY` | yes | Exact fixed value `parallel_ch1` |
-| `DISPENSER_SIGLENT_CHANNEL` | yes | Exact fixed value `CH1` |
-| `DISPENSER_SIGLENT_EXPECTED_MODEL` | yes | `SPD3303X`, `SPD3303X-E`, or `SPD3303C`; C is denied for unverified parallel use |
-| `DISPENSER_SIGLENT_EXPECTED_SERIAL_NUMBER` | yes | Exact fresh `*IDN?` serial expected before any write |
-| `DISPENSER_SIGLENT_COMPLIANCE_VOLTAGE_V` | yes | Fixed `0`–`32` V value aligned to expected-model resolution |
-| `DISPENSER_SIGLENT_MAX_LOAD_CURRENT_A` | yes | Positive operator ceiling; at most 4.8 A for `parallel_ch1` |
-| `DISPENSER_SIGLENT_UPWARD_STEP_A` | yes | Exact fixed load-current step `0.2` A |
-| `DISPENSER_SIGLENT_CONTROL_ENABLED` | yes | Exact `true` or `false` |
+`control_enabled` defaults to `false`; `transport` defaults to `stdio`. The
+acceptance context, expected serial, compliance voltage, HiCube host, and
+gateway identifier have no implicit deployment value and must be filled in.
+When the context is `unloaded_hil`, `unloaded_hil_state_file` must be an absolute
+path in an existing operator-protected directory. It is rejected in
+`production_dispenser`.
 
-Gateway connections require a separate local authentication file. For this
-development checkout, copy
-`settings/py-siglent-spd3000-gateway-auth.toml.template` to the same name without
-`.template`; the populated file is ignored. An explicit absolute
-`DISPENSER_SIGLENT_GATEWAY_AUTH_FILE` overrides that default for deployed
-layouts. The server
-uses the driver's strict TOML loader and passes the token only to the gateway
-client constructor. Do not put the token into MCP tool arguments, environment
-variables, logs, committed files, or Codex-visible configuration.
-The file follows the upstream `gateway-auth.toml.template` exactly:
+The following deployment contract is fixed in code and cannot be weakened in a
+settings file: authenticated gateway connection, `parallel_ch1`, `CH1`, model
+`SPD3303X`, native ceiling 2.4 A, commanded-load ceiling 4.8 A, factor 2, and
+exact 0.2 A commanded-load upward step. The HiCube client, Siglent driver source,
+settings directory, and authentication path are derived from the source
+checkout. No MCP tool or normal operator setting accepts any of those paths.
+
+Gateway authentication remains the sole populated secret file. Copy
+`settings/py-siglent-spd3000/gateway-auth.toml.template` to
+`settings/py-siglent-spd3000/gateway-auth.toml`; the populated file is ignored.
+The server uses the driver's strict loader and passes the token only to the
+gateway client constructor. Do not put the token into MCP arguments, logs,
+committed files, or other settings. Its complete format is:
 
 ```toml
 token = "<non-empty pre-shared token>"
@@ -304,78 +278,28 @@ validation to `siglent_spd3000.load_gateway_auth(..., required=True)` so its
 authentication contract cannot drift from the gateway implementation.
 Direct socket, VXI-11, and VISA connections are denied by this deployment's
 startup policy.
-
-Version 0.5.1 retains the v0.4.3 compatibility behavior that accepts the former
-`DISPENSER_SIGLENT_UNLOADED_HIL_TRIP_LATCH_FILE` name only as a compatibility
-alias for existing operator deployments. The preferred name above describes the
-file's operation-marker and trip-record responsibilities. Setting both names is
-rejected.
-
-Use [.env.example](.env.example) as a name reference, not as a populated file.
-Do not commit endpoints, serial numbers, compliance values, or credentials.
 Starting the server validates local files and policy but performs no device
-connection. A corresponding tool call opens one bounded session.
-
-```powershell
-$env:DISPENSER_HICUBE_CLIENT_FILE = (Resolve-Path "dependencies\hicube\hicube_neo_client.py").Path
-$env:DISPENSER_HICUBE_HOST = "<configured-host>"
-$env:DISPENSER_SIGLENT_DRIVER_SRC = (Resolve-Path "dependencies\py-siglent-spd3000\src").Path
-$env:DISPENSER_SIGLENT_CONNECTION = "gateway"
-$env:DISPENSER_SIGLENT_IDENTIFIER = "<configured-resource>"
-$env:DISPENSER_SIGLENT_GATEWAY_AUTH_FILE = (Resolve-Path "settings\py-siglent-spd3000-gateway-auth.toml").Path
-$env:DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT = "production_dispenser"
-$env:DISPENSER_SIGLENT_TOPOLOGY = "parallel_ch1"
-$env:DISPENSER_SIGLENT_CHANNEL = "CH1"
-$env:DISPENSER_SIGLENT_EXPECTED_MODEL = "<verified-model>"
-$env:DISPENSER_SIGLENT_EXPECTED_SERIAL_NUMBER = "<verified-serial>"
-$env:DISPENSER_SIGLENT_COMPLIANCE_VOLTAGE_V = "<approved-voltage>"
-$env:DISPENSER_SIGLENT_MAX_LOAD_CURRENT_A = "4.8"
-$env:DISPENSER_SIGLENT_UPWARD_STEP_A = "0.2"
-$env:DISPENSER_SIGLENT_CONTROL_ENABLED = "false"
-uv run dispenser-conditioning-mcp
-```
-
-Omitted `DISPENSER_MCP_TRANSPORT` remains backward-compatible stdio. Version
-0.5.1 also supports native Streamable HTTP through startup-only settings. HTTP
-always binds to loopback and requires explicit control policy. A control-enabled
-HTTP process starts only when the operator binds an
+connection. A corresponding tool call opens one bounded session. Streamable
+HTTP always binds to loopback. A control-enabled HTTP process starts only when
+the operator selects an
 `authenticated_ssh_tunnel` or `authenticated_reverse_proxy` deployment
 boundary. These values are assertions about infrastructure outside this
 process, not authentication mechanisms by themselves. See the
 [transport contract](docs/transport-deployment-contract.md) and
 [current Raspberry Pi development workflow](deployment/raspberrypi/QUICK_COMMISSIONING.md).
-The [hardened Raspberry Pi deployment note](deployment/raspberrypi/README.md)
-and [dedicated Windows deployment note](deployment/windows/README.md) are future
-deployment references, not the current research workflow.
-
-For current research, populate `DISPENSER_SIGLENT_DRIVER_SRC` from the pinned
-submodule's `src` directory. Startup verifies that imports resolve from that
-operator-selected root and that the public gateway API required by this MCP is
-present. Git commit pinning is owned by the parent repository's submodule
-gitlink, not by a model-facing setting or a runtime wheel-provenance mechanism.
-
-The driver has been exercised on the physical supply through its authenticated
-gateway, including concurrent multi-client batches. The MCP stdio read path and
-one supervised unloaded-HIL actuation sequence were also exercised on the
-unloaded physical supply at 1.0 V compliance and at most 0.2 A commanded load
-current. Connected-dispenser actuation remains unvalidated. The durable
-measured-current interlock was added after that HIL sequence and v0.4.3 remains
-validated only with offline fakes; no further live actuation is authorized
-without fresh human connection confirmation and review of this interlock.
 
 ### Minimal unloaded-HIL acceptance sequence
 
-For a supply with no dispenser or unapproved load connected, use a low 1.0 V
-fixed compliance voltage and lower the operator load-current ceiling to 0.2 A
-for the first acceptance run. Operator-approved metrology wiring may be present.
-The deployment hard ceilings remain 2.4 A native and 4.8 A commanded load
-current; this lower operator ceiling deliberately permits only the first exact
-0.2 A load-current step.
+For a supply with no dispenser or unapproved load connected, an operator may
+approve a low 1.0 V fixed compliance voltage for the first acceptance run.
+Operator-approved metrology wiring may be present. The immutable ceilings remain
+2.4 A native and 4.8 A commanded load current; the agent must still execute only
+the reviewed first exact 0.2 A load-current step in this acceptance sequence.
 
 1. Keep outputs off and set parallel tracking mode through an operator-controlled
    out-of-band procedure. MCP intentionally exposes no tracking-mode command.
 2. Start with `unloaded_hil`, the exact bound identity, 1.0 V compliance,
-   0.2 A operator load-current ceiling, exact 0.2 A upward step, and control
+   exact 0.2 A upward step, and control
    disabled. Bind a protected absolute durable-state file path outside agent
    access. Read state and verify identity, output off, `parallel` mode, and an
    `unlatched` interlock.
@@ -398,11 +322,10 @@ conditioning or activation evidence.
 
 ## Integration and later safety layers
 
-Register the same executable and environment through the MCP host (for example,
-`codex mcp add ... -- uv --directory <this-directory> run
-dispenser-conditioning-mcp`). Inspect the advertised catalog before any live
-read and keep `DISPENSER_SIGLENT_CONTROL_ENABLED=false` during catalog/read-only
-integration.
+Register the same executable through the MCP host (for example, `codex mcp add
+... -- uv --directory <this-directory> run dispenser-conditioning-mcp`). Inspect
+the advertised catalog before any live read and keep `control_enabled = false`
+in `settings/mcp-settings.toml` during catalog/read-only integration.
 
 Before unattended autonomous conditioning, separate higher-level work must add
 a persistent safety supervisor/output lease, pressure freshness and trip logic,

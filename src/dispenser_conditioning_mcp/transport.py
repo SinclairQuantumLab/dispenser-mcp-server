@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 from urllib.parse import urlsplit
 
 from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from dispenser_conditioning_mcp.config import ConfigurationError
+from dispenser_conditioning_mcp.config import (
+    ConfigurationError,
+    McpStartupConfiguration,
+)
 
 McpTransport = Literal["stdio", "streamable-http"]
 HttpTrustMode = Literal[
@@ -27,14 +29,6 @@ DEFAULT_HTTP_PATH = "/mcp"
 MAX_HTTP_REQUEST_BODY_BYTES = 256 * 1024
 
 _LOOPBACK_NAMES = frozenset({"localhost"})
-_HTTP_ONLY_VARIABLES = (
-    "DISPENSER_MCP_HTTP_BIND_HOST",
-    "DISPENSER_MCP_HTTP_PORT",
-    "DISPENSER_MCP_HTTP_PATH",
-    "DISPENSER_MCP_HTTP_TRUST_MODE",
-    "DISPENSER_MCP_HTTP_ALLOWED_HOSTS",
-    "DISPENSER_MCP_HTTP_ALLOWED_ORIGINS",
-)
 _HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 
 
@@ -51,68 +45,36 @@ class McpTransportConfiguration:
     allowed_origins: tuple[str, ...] = ()
 
     @classmethod
-    def from_environment(
-        cls, environment: Mapping[str, str] | None = None
+    def from_settings(
+        cls, settings: McpStartupConfiguration
     ) -> McpTransportConfiguration:
-        """Load a default-stdio, fail-closed transport policy."""
+        """Build a default-stdio, fail-closed transport policy from TOML."""
 
-        import os
-
-        values = os.environ if environment is None else environment
-        raw_transport = values.get("DISPENSER_MCP_TRANSPORT", "stdio")
-        if raw_transport not in {"stdio", "streamable-http"}:
-            raise ConfigurationError(
-                "DISPENSER_MCP_TRANSPORT must be stdio or streamable-http."
-            )
-        if raw_transport == "stdio":
-            configured_http_variables = [
-                name for name in _HTTP_ONLY_VARIABLES if values.get(name) is not None
-            ]
-            if configured_http_variables:
-                raise ConfigurationError(
-                    "HTTP-only transport settings are invalid when "
-                    "DISPENSER_MCP_TRANSPORT is stdio."
-                )
+        if settings.transport == "stdio":
             return cls(transport="stdio")
 
-        control_enabled = _required_boolean(
-            values.get("DISPENSER_SIGLENT_CONTROL_ENABLED"),
-            name="DISPENSER_SIGLENT_CONTROL_ENABLED",
-        )
-        bind_host = values.get("DISPENSER_MCP_HTTP_BIND_HOST", DEFAULT_HTTP_BIND_HOST)
+        http = settings.streamable_http
+        if http is None:
+            raise ConfigurationError(
+                "streamable_http settings are required for Streamable HTTP."
+            )
+        bind_host = http.bind_host
         if not _is_loopback_host(bind_host):
             raise ConfigurationError(
                 "Streamable HTTP must bind to an explicit loopback host."
             )
-        port = _port(values.get("DISPENSER_MCP_HTTP_PORT"))
-        path = _path(values.get("DISPENSER_MCP_HTTP_PATH"))
-        raw_trust_mode = values.get("DISPENSER_MCP_HTTP_TRUST_MODE", "loopback_only")
-        if raw_trust_mode not in {
-            "loopback_only",
-            "authenticated_ssh_tunnel",
-            "authenticated_reverse_proxy",
-        }:
-            raise ConfigurationError(
-                "DISPENSER_MCP_HTTP_TRUST_MODE must be loopback_only, "
-                "authenticated_ssh_tunnel, or authenticated_reverse_proxy."
-            )
-        trust_mode = cast(HttpTrustMode, raw_trust_mode)
-
-        configured_hosts = _csv_values(
-            values.get("DISPENSER_MCP_HTTP_ALLOWED_HOSTS"),
-            name="DISPENSER_MCP_HTTP_ALLOWED_HOSTS",
-        )
-        configured_origins = _csv_values(
-            values.get("DISPENSER_MCP_HTTP_ALLOWED_ORIGINS"),
-            name="DISPENSER_MCP_HTTP_ALLOWED_ORIGINS",
-        )
+        port = http.port
+        path = _path(http.path)
+        trust_mode = http.trust_mode
+        configured_hosts = http.allowed_hosts
+        configured_origins = http.allowed_origins
         if trust_mode in {"loopback_only", "authenticated_ssh_tunnel"}:
             if configured_hosts or configured_origins:
                 raise ConfigurationError(
                     "Custom allowed hosts and origins are valid only for the "
                     "authenticated_reverse_proxy trust mode."
                 )
-            if trust_mode == "loopback_only" and control_enabled:
+            if trust_mode == "loopback_only" and settings.control_enabled:
                 raise ConfigurationError(
                     "Streamable HTTP power control requires an operator-owned "
                     "authenticated SSH tunnel or reverse proxy."
@@ -122,7 +84,7 @@ class McpTransportConfiguration:
         else:
             if not configured_hosts:
                 raise ConfigurationError(
-                    "DISPENSER_MCP_HTTP_ALLOWED_HOSTS is required for an "
+                    "streamable_http.allowed_hosts is required for an "
                     "authenticated reverse proxy."
                 )
             for host in configured_hosts:
@@ -181,14 +143,6 @@ def run_configured_transport(
     )
 
 
-def _required_boolean(raw_value: str | None, *, name: str) -> bool:
-    if raw_value == "true":
-        return True
-    if raw_value == "false":
-        return False
-    raise ConfigurationError(f"{name} must be explicitly true or false.")
-
-
 def _is_loopback_host(host: str) -> bool:
     if (
         not host
@@ -204,26 +158,7 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
-def _port(raw_value: str | None) -> int:
-    if raw_value is None:
-        return DEFAULT_HTTP_PORT
-    if not raw_value or raw_value != raw_value.strip():
-        raise ConfigurationError("DISPENSER_MCP_HTTP_PORT must be an integer.")
-    try:
-        value = int(raw_value)
-    except ValueError as error:
-        raise ConfigurationError(
-            "DISPENSER_MCP_HTTP_PORT must be an integer."
-        ) from error
-    if not 1024 <= value <= 65535:
-        raise ConfigurationError(
-            "DISPENSER_MCP_HTTP_PORT must be between 1024 and 65535."
-        )
-    return value
-
-
-def _path(raw_value: str | None) -> str:
-    value = DEFAULT_HTTP_PATH if raw_value is None else raw_value
+def _path(value: str) -> str:
     if (
         not value.startswith("/")
         or value == "/"
@@ -234,21 +169,8 @@ def _path(raw_value: str | None) -> str:
         or "\\" in value
         or any(character.isspace() or ord(character) < 32 for character in value)
     ):
-        raise ConfigurationError("DISPENSER_MCP_HTTP_PATH is invalid.")
+        raise ConfigurationError("streamable_http.path is invalid.")
     return value
-
-
-def _csv_values(raw_value: str | None, *, name: str) -> tuple[str, ...]:
-    if raw_value is None:
-        return ()
-    if not raw_value or raw_value != raw_value.strip():
-        raise ConfigurationError(f"{name} is invalid.")
-    values = tuple(item.strip() for item in raw_value.split(","))
-    if any(not item for item in values):
-        raise ConfigurationError(f"{name} contains an empty value.")
-    if len(set(values)) != len(values):
-        raise ConfigurationError(f"{name} contains a duplicate value.")
-    return values
 
 
 def _loopback_host_headers(bind_host: str, port: int) -> tuple[str, ...]:
@@ -264,23 +186,23 @@ def _validate_host_header(host: str) -> None:
         or any(forbidden in host for forbidden in ("*", "/", "\\", "@", "://"))
     ):
         raise ConfigurationError(
-            "DISPENSER_MCP_HTTP_ALLOWED_HOSTS contains an invalid exact Host value."
+            "streamable_http.allowed_hosts contains an invalid exact Host value."
         )
     parsed = urlsplit(f"//{host}")
     try:
         port = parsed.port
     except ValueError as error:
         raise ConfigurationError(
-            "DISPENSER_MCP_HTTP_ALLOWED_HOSTS contains an invalid port."
+            "streamable_http.allowed_hosts contains an invalid port."
         ) from error
     if parsed.username is not None or parsed.password is not None or parsed.path:
         raise ConfigurationError(
-            "DISPENSER_MCP_HTTP_ALLOWED_HOSTS contains an invalid exact Host value."
+            "streamable_http.allowed_hosts contains an invalid exact Host value."
         )
     hostname = parsed.hostname
     if hostname is None or (port is not None and not 1 <= port <= 65535):
         raise ConfigurationError(
-            "DISPENSER_MCP_HTTP_ALLOWED_HOSTS contains an invalid exact Host value."
+            "streamable_http.allowed_hosts contains an invalid exact Host value."
         )
     try:
         ipaddress.ip_address(hostname)
@@ -288,7 +210,7 @@ def _validate_host_header(host: str) -> None:
         labels = hostname.rstrip(".").split(".")
         if any(_HOST_LABEL.fullmatch(label) is None for label in labels):
             raise ConfigurationError(
-                "DISPENSER_MCP_HTTP_ALLOWED_HOSTS contains an invalid hostname."
+                "streamable_http.allowed_hosts contains an invalid hostname."
             )
 
 
@@ -297,14 +219,14 @@ def _validate_https_origin(origin: str) -> None:
         character.isspace() or ord(character) < 32 for character in origin
     ):
         raise ConfigurationError(
-            "DISPENSER_MCP_HTTP_ALLOWED_ORIGINS contains an invalid origin."
+            "streamable_http.allowed_origins contains an invalid origin."
         )
     parsed = urlsplit(origin)
     try:
         port = parsed.port
     except ValueError as error:
         raise ConfigurationError(
-            "DISPENSER_MCP_HTTP_ALLOWED_ORIGINS contains an invalid port."
+            "streamable_http.allowed_origins contains an invalid port."
         ) from error
     if (
         parsed.scheme != "https"
@@ -317,7 +239,7 @@ def _validate_https_origin(origin: str) -> None:
         or (port is not None and not 1 <= port <= 65535)
     ):
         raise ConfigurationError(
-            "DISPENSER_MCP_HTTP_ALLOWED_ORIGINS must contain exact HTTPS origins."
+            "streamable_http.allowed_origins must contain exact HTTPS origins."
         )
 
 

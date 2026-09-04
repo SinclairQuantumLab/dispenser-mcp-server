@@ -12,9 +12,9 @@ def test_sdist_has_explicit_product_allowlist_and_secret_safe_exclusions() -> No
     sdist = configuration["tool"]["hatch"]["build"]["targets"]["sdist"]
 
     assert set(sdist["include"]) == {
-        "/.env.example",
         "/AGENTS.md",
         "/README.md",
+        "/settings",
         "/deployment",
         "/docs",
         "/pyproject.toml",
@@ -29,6 +29,7 @@ def test_sdist_has_explicit_product_allowlist_and_secret_safe_exclusions() -> No
         "/.venv",
         "/dist",
         "/dependencies",
+        "**/gateway-auth.toml",
         "**/__pycache__",
         "**/*.pyc",
     }.issubset(set(sdist["exclude"]))

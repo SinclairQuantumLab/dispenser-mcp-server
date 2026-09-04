@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import sys
 
-from dispenser_conditioning_mcp.config import ConfigurationError
+from dispenser_conditioning_mcp.app import create_configured_server
+from dispenser_conditioning_mcp.config import ConfigurationError, OperatorConfiguration
 from dispenser_conditioning_mcp.transport import (
     McpTransportConfiguration,
     run_configured_transport,
@@ -21,8 +22,11 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     try:
-        transport_configuration = McpTransportConfiguration.from_environment()
-        from dispenser_conditioning_mcp.app import mcp
+        operator = OperatorConfiguration.from_toml()
+        transport_configuration = McpTransportConfiguration.from_settings(
+            operator.startup
+        )
+        mcp = create_configured_server(operator)
     except ConfigurationError as error:
         print(f"Configuration error: {error}", file=sys.stderr)
         raise SystemExit(2) from error

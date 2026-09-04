@@ -1319,6 +1319,60 @@ def test_completion_marker_failure_shuts_down_and_restart_denies_session(
     assert restarted_factory.calls == 0
 
 
+def test_post_publication_completion_sync_failure_denies_fresh_process_before_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = FakeDevice()
+    config = unloaded_configuration(tmp_path)
+    state_path = config.unloaded_hil_state_file
+    assert state_path is not None
+    provider = FileUnloadedHilDurableStateProvider(state_path)
+    original_sync = provider._fsync_parent_directory  # pyright: ignore[reportPrivateUsage]
+    sync_calls = 0
+
+    def fail_completed_publication_sync() -> None:
+        nonlocal sync_calls
+        sync_calls += 1
+        if sync_calls == 3:
+            raise OSError("injected post-publication directory sync failure")
+        original_sync()
+
+    monkeypatch.setattr(
+        provider,
+        "_fsync_parent_directory",
+        fail_completed_publication_sync,
+    )
+    control, _factory = controller(
+        tmp_path,
+        device,
+        config=config,
+        durable_state_provider=provider,
+    )
+
+    with pytest.raises(PowerControlError, match="safe-completion marker"):
+        control.prepare()
+
+    assert json.loads(state_path.read_text(encoding="utf-8"))["record_type"] == (
+        "completed_operation"
+    )
+    assert device.output_enabled is False
+    assert device.ch2_output_enabled is False
+    restarted, restarted_factory = controller(
+        tmp_path,
+        FakeDevice(),
+        config=config,
+    )
+    with pytest.raises(PowerControlError, match="fail-closed"):
+        restarted.prepare()
+    assert restarted_factory.calls == 0
+    diagnostic = restarted.read_state()
+    assert diagnostic.unloaded_hil_interlock.status == "unavailable_fail_closed"
+    assert diagnostic.unloaded_hil_interlock.failure_reason == (
+        "unfinished_pending_operation"
+    )
+
+
 def test_unfinished_file_pending_operation_denies_after_restart_before_session(
     tmp_path: Path,
 ) -> None:

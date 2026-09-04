@@ -24,19 +24,21 @@
 
 - Never browse OPC UA nodes, scan a network, write an OPC UA Value, or call an
   OPC UA Method.
-- Keep device host, port, timeout, and client-file path in operator startup
-  configuration. Do not add them to model-facing tool arguments or results.
+- Keep device host, port, and timeout in strict operator-owned TOML settings.
+  Resolve the vendored client path from the source checkout. Do not add any of
+  them to model-facing tool arguments or results.
 - Opening a HiCube client, reading one batch snapshot, and closing the client
   must remain one bounded synchronous tool operation.
 - Sanitize model-visible errors. Device addresses, local paths, and raw driver
   exceptions may not appear in tool results.
 - Pressure is total gauge pressure. It is not rubidium partial pressure and
   does not independently verify dispenser activation or function.
-- Require explicit startup binding for power acceptance context, topology,
-  channel, identity, compliance voltage, current ceilings, upward-step limit,
-  and control enable.
-- Accept only the `parallel_ch1` topology and `CH1` native channel in this
-  deployment's public startup configuration.
+- Require explicit startup binding for power acceptance context, expected
+  serial identity, compliance voltage, and control enable. Keep the remaining
+  hardware policy fixed below.
+- Keep `parallel_ch1`, `CH1`, `SPD3303X`, the 2.4 A native ceiling, the 4.8 A
+  commanded-load ceiling, and the exact 0.2 A upward step as code/contract
+  constants rather than configurable operator values.
 - Never change tracking mode. Verify the live mode before preparing, enabling,
   or changing current. Identity mismatch must cause zero writes.
 - Treat `parallel_ch1` current as a commanded load-current limit derived from
@@ -54,13 +56,12 @@
 - Keep the two context-specific confirmation arguments and literals
   non-interchangeable. Instrument state is not evidence of external wiring or
   no-load state.
-- Read gateway authentication only from an operator-selected, untracked
+- Read gateway authentication only from the fixed, untracked
   `gateway-auth.toml` file. Never expose its token in logs, tool arguments,
   results, errors, fixtures, or committed configuration.
-- Use `settings/py-siglent-spd3000-gateway-auth.toml` as the canonical local
-  development credential path. Track only its sanitized `.template`; keep the
-  populated file explicitly ignored. Deployed layouts may override it with the
-  absolute startup environment setting.
+- Use `settings/py-siglent-spd3000/gateway-auth.toml` as the canonical local
+  credential path. Track only its sanitized `.template`; keep the populated
+  file explicitly ignored. Do not add a normal operator path override.
 - During research and development, use the pinned Git submodule at
   `dependencies/py-siglent-spd3000` as the canonical Siglent source. Load its
   `src` directory directly and require the expected public gateway API from that
@@ -80,11 +81,13 @@
   energized debounce. Keep the threshold and latch context/path/reset/bypass
   outside MCP inputs.
 - Before any unloaded-HIL mutating request opens a device session, the protected
-  durable-state provider must commit a pending-operation marker. Supersede it
-  with a completed-operation record only after the operation and fresh
-  measured-current safe-band check succeed. Any unfinished marker, crash,
-  uncertain write, trip persistence failure, or completion failure must deny
-  mutation before device access after restart.
+  durable-state provider must commit both the primary pending-operation record
+  and its separately durable pending guard. Publish a completed-operation or
+  trip record only while the guard remains authoritative, and retire the guard
+  only after the safe replacement is durably published and verified. Any
+  unfinished marker or guard, crash, uncertain write, trip persistence failure,
+  or reported completion failure must deny mutation before device access after
+  restart.
 - Treat a missing durable HIL state file as not operator-initialized and
   fail-closed. Each host deployment must provide a separately protected,
   out-of-band initializer using atomic no-overwrite creation after physical
@@ -108,7 +111,7 @@
 - Treat HTTP trust mode as an operator assertion about a real external security
   boundary, not as authentication implemented by this server. Do not add a
   weak bearer-token scheme. The AI client may receive only the MCP endpoint and
-  tools, never process lifecycle, environment, credentials, auth files, durable
+  tools, never process lifecycle, settings, credentials, auth files, durable
   state, logs, or reset authority.
 - Deploy unloaded-HIL and production profiles as separate process instances
   with distinct ports, authentication paths, policies, and HIL state. Permit

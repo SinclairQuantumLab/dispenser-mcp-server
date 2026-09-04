@@ -61,10 +61,13 @@ _StoredRecord = (
 
 
 class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
-    """Persist one trip-or-operation state file without a reset method."""
+    """Persist primary state plus a fail-closed guard without reset authority."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
+        self._pending_guard_path = path.with_name(
+            f".{path.name}.pending-operation-guard"
+        )
 
     def read_state(self) -> UnloadedHilDurableState:
         """Return the active trip/pending state or fail closed on invalid content."""
@@ -72,6 +75,12 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
         record = self._read_record()
         if isinstance(record, UnloadedHilTripRecord):
             return UnloadedHilDurableState(trip=record, pending_operation=None)
+        pending_guard = self._read_pending_guard()
+        if pending_guard is not None:
+            return UnloadedHilDurableState(
+                trip=None,
+                pending_operation=pending_guard,
+            )
         if isinstance(record, UnloadedHilPendingOperationRecord):
             return UnloadedHilDurableState(trip=None, pending_operation=record)
         return UnloadedHilDurableState(trip=None, pending_operation=None)
@@ -104,8 +113,12 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
             operation=operation,
         )
         self._replace_record(pending)
-        verified = self._read_record()
-        if verified != pending:
+        if self._read_record() != pending:
+            raise InterlockStorageError(
+                "The unloaded-HIL pending operation could not be verified."
+            )
+        self._create_pending_guard(pending)
+        if self._read_record() != pending or self._read_pending_guard() != pending:
             raise InterlockStorageError(
                 "The unloaded-HIL pending operation could not be verified."
             )
@@ -117,10 +130,11 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
         *,
         completed_at: datetime,
     ) -> None:
-        """Atomically supersede one pending marker after safe completion."""
+        """Publish safe completion before retiring its durable pending guard."""
 
         active = self._read_record()
-        if active != pending:
+        pending_guard = self._read_pending_guard()
+        if active != pending or pending_guard != pending:
             raise InterlockStorageError(
                 "The unloaded-HIL pending operation changed before completion."
             )
@@ -133,9 +147,14 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
             operation=pending.operation,
         )
         self._replace_record(completed)
+        if self._read_record() != completed:
+            raise InterlockStorageError(
+                "The unloaded-HIL completed operation could not be verified."
+            )
+        self._retire_pending_guard(pending)
 
     def record_trip(self, record: UnloadedHilTripRecord) -> None:
-        """Replace a pending marker with the first structurally valid trip."""
+        """Publish the first valid trip before retiring any pending guard."""
 
         active = self._read_record()
         if isinstance(active, UnloadedHilTripRecord):
@@ -144,7 +163,20 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
             raise InterlockStorageError(
                 "A completed unloaded-HIL operation cannot be replaced by a trip."
             )
+        pending_guard = self._read_pending_guard()
+        if isinstance(active, UnloadedHilPendingOperationRecord):
+            if pending_guard is not None and pending_guard != active:
+                raise InterlockStorageError(
+                    "The unloaded-HIL pending operation guard is inconsistent."
+                )
+        elif pending_guard is not None:
+            raise InterlockStorageError(
+                "The unloaded-HIL pending operation guard is inconsistent."
+            )
         self._replace_record(record)
+        if pending_guard is not None:
+            assert isinstance(active, UnloadedHilPendingOperationRecord)
+            self._retire_pending_guard(active)
 
     def _read_record(self) -> _StoredRecord:
         try:
@@ -175,6 +207,79 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
                 "The unloaded-HIL durable state is invalid."
             ) from error
 
+    def _read_pending_guard(self) -> UnloadedHilPendingOperationRecord | None:
+        try:
+            if self._pending_guard_path.is_symlink():
+                raise OSError("pending guard may not be a symlink")
+            raw = self._pending_guard_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise InterlockStorageError(
+                "The unloaded-HIL pending operation guard is unreadable."
+            ) from error
+        try:
+            untyped_payload: object = json.loads(raw)
+            if not isinstance(untyped_payload, dict):
+                raise ValueError("pending guard must be a JSON object")
+            return UnloadedHilPendingOperationRecord.model_validate(untyped_payload)
+        except (ValueError, TypeError) as error:
+            raise InterlockStorageError(
+                "The unloaded-HIL pending operation guard is invalid."
+            ) from error
+
+    def _create_pending_guard(
+        self,
+        pending: UnloadedHilPendingOperationRecord,
+    ) -> None:
+        """Publish a durable guard that cannot be replaced by MCP execution."""
+
+        encoded = pending.model_dump_json(indent=2).encode("utf-8") + b"\n"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        try:
+            descriptor = os.open(self._pending_guard_path, flags, 0o600)
+        except OSError as error:
+            raise InterlockStorageError(
+                "The unloaded-HIL pending operation guard could not be created."
+            ) from error
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                self._fsync_file_descriptor(handle.fileno())
+            self._fsync_parent_directory()
+        except OSError as error:
+            # Never remove a partially or fully published guard on failure. An
+            # invalid or valid survivor both force a fresh process fail-closed.
+            raise InterlockStorageError(
+                "The unloaded-HIL pending operation guard could not be committed."
+            ) from error
+
+    def _retire_pending_guard(
+        self,
+        pending: UnloadedHilPendingOperationRecord,
+    ) -> None:
+        """Retire the guard only after a safe replacement is already durable."""
+
+        if self._read_pending_guard() != pending:
+            raise InterlockStorageError(
+                "The unloaded-HIL pending operation guard changed before retirement."
+            )
+        try:
+            self._unlink_pending_guard()
+        except OSError as error:
+            raise InterlockStorageError(
+                "The unloaded-HIL pending operation guard could not be retired."
+            ) from error
+        try:
+            self._fsync_parent_directory()
+        except OSError:
+            # The completed/trip record was durably published before unlink.
+            # If an unflushed deletion is lost after a crash, the guard returns
+            # and makes the next process fail closed; it cannot create a false
+            # unlatched state. Therefore this cleanup uncertainty is safe.
+            pass
+
     def _replace_record(self, record: BaseModel) -> None:
         encoded = record.model_dump_json(indent=2).encode("utf-8") + b"\n"
         temporary_path = self._path.with_name(f".{self._path.name}.{uuid4().hex}.tmp")
@@ -189,7 +294,7 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(encoded)
                 handle.flush()
-                os.fsync(handle.fileno())
+                self._fsync_file_descriptor(handle.fileno())
             self._replace_staged_file(temporary_path)
         except OSError as error:
             raise InterlockStorageError(
@@ -228,6 +333,16 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+    def _fsync_file_descriptor(self, descriptor: int) -> None:
+        """Flush one staged state or guard file before publication."""
+
+        os.fsync(descriptor)
+
+    def _unlink_pending_guard(self) -> None:
+        """Remove the matched pending guard after a durable safe transition."""
+
+        self._pending_guard_path.unlink()
 
 
 def _is_transient_windows_replace_error(error: OSError) -> bool:

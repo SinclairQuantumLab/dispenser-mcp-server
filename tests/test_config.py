@@ -2,264 +2,273 @@ from pathlib import Path
 
 import pytest
 
-import dispenser_conditioning_mcp.config as config_module
 from dispenser_conditioning_mcp.config import (
     ConfigurationError,
-    HiCubeConfiguration,
-    SiglentConfiguration,
+    OperatorConfiguration,
+    SourceLayout,
 )
 
 
-def test_environment_configuration_is_operator_only(tmp_path: Path) -> None:
-    client_file = tmp_path / "hicube_neo_client.py"
-    client_file.write_text("# test fixture\n", encoding="utf-8")
-
-    configuration = HiCubeConfiguration.from_environment(
-        {
-            "DISPENSER_HICUBE_CLIENT_FILE": str(client_file),
-            "DISPENSER_HICUBE_HOST": "192.0.2.10",
-            "DISPENSER_HICUBE_PORT": "4841",
-            "DISPENSER_HICUBE_TIMEOUT_S": "2.5",
-        }
-    )
-
-    assert configuration.client_file == client_file.resolve()
-    assert configuration.host == "192.0.2.10"
-    assert configuration.port == 4841
-    assert configuration.timeout_s == 2.5
-
-
-def test_hicube_client_defaults_to_canonical_vendored_file(
+def _write_layout(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    client_file = tmp_path / "dependencies/hicube/hicube_neo_client.py"
-    client_file.parent.mkdir(parents=True)
-    client_file.write_text("# canonical fixture\n", encoding="utf-8")
-    monkeypatch.setattr(
-        config_module,
-        "DEFAULT_DEVELOPMENT_HICUBE_CLIENT_FILE",
-        client_file,
+    *,
+    main_extra: str = "",
+    hicube_extra: str = "",
+    gateway_extra: str = "",
+    acceptance_context: str = "production_dispenser",
+    control_enabled: bool = False,
+) -> SourceLayout:
+    layout = SourceLayout._for_testing(  # pyright: ignore[reportPrivateUsage]
+        tmp_path / "source checkout"
     )
-
-    configuration = HiCubeConfiguration.from_environment(
-        {"DISPENSER_HICUBE_HOST": "192.0.2.10"}
+    layout.siglent_settings_directory.mkdir(parents=True)
+    layout.hicube_client_file.parent.mkdir(parents=True)
+    layout.siglent_driver_src.joinpath("siglent_spd3000").mkdir(parents=True)
+    layout.hicube_client_file.write_text("# offline fixture\n", encoding="utf-8")
+    layout.siglent_driver_src.joinpath("siglent_spd3000", "__init__.py").write_text(
+        "# offline fixture\n", encoding="utf-8"
     )
-
-    assert configuration.client_file == client_file.resolve()
-
-
-def test_hicube_client_default_fails_closed_when_vendored_file_is_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        config_module,
-        "DEFAULT_DEVELOPMENT_HICUBE_CLIENT_FILE",
-        tmp_path / "dependencies/hicube/hicube_neo_client.py",
+    layout.siglent_gateway_auth_file.write_text(
+        'token = "offline-fixture"\n', encoding="utf-8"
     )
+    state_setting = ""
+    if acceptance_context == "unloaded_hil":
+        state_directory = tmp_path / "protected state"
+        state_directory.mkdir()
+        state_setting = (
+            f'unloaded_hil_state_file = "{state_directory.as_posix()}/state.json"\n'
+        )
+    layout.mcp_settings_file.write_text(
+        (
+            "schema_version = 1\n"
+            f'acceptance_context = "{acceptance_context}"\n'
+            'expected_serial_number = "SPD-OFFLINE"\n'
+            "compliance_voltage_v = 10.0\n"
+            f"control_enabled = {str(control_enabled).lower()}\n"
+            'transport = "stdio"\n'
+            f"{state_setting}{main_extra}"
+        ),
+        encoding="utf-8",
+    )
+    layout.hicube_settings_file.write_text(
+        (
+            "schema_version = 1\n"
+            'host = "192.0.2.10"\n'
+            "port = 4841\n"
+            "timeout_s = 2.5\n"
+            f"{hicube_extra}"
+        ),
+        encoding="utf-8",
+    )
+    layout.siglent_gateway_settings_file.write_text(
+        (
+            "schema_version = 1\n"
+            'identifier = "offline.test:8765"\n'
+            "timeout_s = 2.0\n"
+            "minimum_command_interval_ms = 100.0\n"
+            f"{gateway_extra}"
+        ),
+        encoding="utf-8",
+    )
+    return layout
 
-    with pytest.raises(ConfigurationError, match="readable file"):
-        HiCubeConfiguration.from_environment({"DISPENSER_HICUBE_HOST": "192.0.2.10"})
+
+def test_three_toml_documents_build_one_fixed_policy(tmp_path: Path) -> None:
+    layout = _write_layout(tmp_path)
+
+    configuration = OperatorConfiguration.from_toml(layout)
+
+    assert configuration.layout == layout
+    assert configuration.hicube.client_file == layout.hicube_client_file.resolve()
+    assert configuration.hicube.host == "192.0.2.10"
+    assert configuration.hicube.port == 4841
+    assert configuration.hicube.timeout_s == 2.5
+    assert configuration.siglent.driver_src == layout.siglent_driver_src.resolve()
+    assert configuration.siglent.gateway_auth_file == (
+        layout.siglent_gateway_auth_file.resolve()
+    )
+    assert configuration.siglent.connection == "gateway"
+    assert configuration.siglent.topology == "parallel_ch1"
+    assert configuration.siglent.channel == "CH1"
+    assert configuration.siglent.expected_model == "SPD3303X"
+    assert configuration.siglent.max_load_current_a == 4.8
+    assert configuration.siglent.upward_step_a == 0.2
+    assert configuration.siglent.load_current_factor == 2
+    assert configuration.siglent.control_enabled is False
+    assert configuration.startup.transport == "stdio"
+
+
+def test_safe_defaults_are_stdio_and_control_disabled(tmp_path: Path) -> None:
+    layout = _write_layout(tmp_path)
+    text = layout.mcp_settings_file.read_text(encoding="utf-8")
+    text = text.replace("control_enabled = false\n", "").replace(
+        'transport = "stdio"\n', ""
+    )
+    layout.mcp_settings_file.write_text(text, encoding="utf-8")
+
+    configuration = OperatorConfiguration.from_toml(layout)
+
+    assert configuration.startup.control_enabled is False
+    assert configuration.startup.transport == "stdio"
 
 
 @pytest.mark.parametrize(
-    ("key", "value"),
+    ("file_name", "extra"),
     [
-        ("DISPENSER_HICUBE_HOST", "opc.tcp://192.0.2.10"),
-        ("DISPENSER_HICUBE_HOST", "example.test:4840"),
-        ("DISPENSER_HICUBE_PORT", "0"),
-        ("DISPENSER_HICUBE_TIMEOUT_S", "0"),
+        ("main", "unexpected = true\n"),
+        ("hicube", 'client_file = "operator/path.py"\n'),
+        ("gateway", 'driver_src = "operator/src"\n'),
     ],
 )
-def test_environment_configuration_rejects_invalid_values(
-    tmp_path: Path, key: str, value: str
+def test_each_toml_document_rejects_unknown_keys(
+    tmp_path: Path, file_name: str, extra: str
 ) -> None:
-    client_file = tmp_path / "hicube_neo_client.py"
-    client_file.write_text("# test fixture\n", encoding="utf-8")
-    environment = {
-        "DISPENSER_HICUBE_CLIENT_FILE": str(client_file),
-        "DISPENSER_HICUBE_HOST": "example.test",
-        key: value,
-    }
+    kwargs = {f"{file_name}_extra": extra}
+    layout = _write_layout(tmp_path, **kwargs)  # type: ignore[arg-type]
 
-    with pytest.raises(ConfigurationError):
-        HiCubeConfiguration.from_environment(environment)
-
-
-def _siglent_environment(tmp_path: Path) -> dict[str, str]:
-    driver_src = tmp_path / "driver-src"
-    package = driver_src / "siglent_spd3000"
-    package.mkdir(parents=True)
-    (package / "__init__.py").write_text("# offline fixture\n", encoding="utf-8")
-    auth_file = tmp_path / "gateway-auth.toml"
-    auth_file.write_text('token = "offline-test-token"\n', encoding="utf-8")
-    return {
-        "DISPENSER_SIGLENT_DRIVER_SRC": str(driver_src),
-        "DISPENSER_SIGLENT_CONNECTION": "gateway",
-        "DISPENSER_SIGLENT_IDENTIFIER": "offline.test:8765",
-        "DISPENSER_SIGLENT_GATEWAY_AUTH_FILE": str(auth_file),
-        "DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT": "production_dispenser",
-        "DISPENSER_SIGLENT_TOPOLOGY": "parallel_ch1",
-        "DISPENSER_SIGLENT_CHANNEL": "CH1",
-        "DISPENSER_SIGLENT_EXPECTED_MODEL": "SPD3303X",
-        "DISPENSER_SIGLENT_EXPECTED_SERIAL_NUMBER": "SPD-BOUND",
-        "DISPENSER_SIGLENT_COMPLIANCE_VOLTAGE_V": "10.000",
-        "DISPENSER_SIGLENT_MAX_LOAD_CURRENT_A": "4.8",
-        "DISPENSER_SIGLENT_UPWARD_STEP_A": "0.2",
-        "DISPENSER_SIGLENT_CONTROL_ENABLED": "false",
-    }
-
-
-def test_siglent_configuration_requires_explicit_safety_policy(tmp_path: Path) -> None:
-    environment = _siglent_environment(tmp_path)
-    configuration = SiglentConfiguration.from_environment(environment)
-
-    assert configuration.topology == "parallel_ch1"
-    assert configuration.acceptance_context == "production_dispenser"
-    assert configuration.channel == "CH1"
-    assert configuration.load_current_factor == 2
-    assert configuration.expected_serial_number == "SPD-BOUND"
-    assert configuration.gateway_auth_file.name == "gateway-auth.toml"
-    assert configuration.max_load_current_a == 4.8
-    assert configuration.upward_step_a == 0.2
-    assert configuration.control_enabled is False
-    assert configuration.timeout_s == 5.0
-    assert configuration.min_command_interval_ms == 100.0
+    with pytest.raises(ConfigurationError, match="unknown setting"):
+        OperatorConfiguration.from_toml(layout)
 
 
 @pytest.mark.parametrize(
-    ("key", "value"),
+    ("key", "replacement", "message"),
     [
-        ("DISPENSER_SIGLENT_TOPOLOGY", "independent"),
-        ("DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT", "unreviewed_test"),
-        ("DISPENSER_SIGLENT_CHANNEL", "CH2"),
-        ("DISPENSER_SIGLENT_MAX_LOAD_CURRENT_A", "4.9"),
-        ("DISPENSER_SIGLENT_UPWARD_STEP_A", "0.1"),
-        ("DISPENSER_SIGLENT_CONTROL_ENABLED", "yes"),
-        ("DISPENSER_SIGLENT_EXPECTED_MODEL", "SPD3303C"),
-        ("DISPENSER_SIGLENT_VISA_BACKEND", "@py"),
+        (
+            'expected_serial_number = "SPD-OFFLINE"',
+            'expected_serial_number = "replace-with-serial"',
+            "placeholder",
+        ),
+        (
+            "compliance_voltage_v = 10.0",
+            'compliance_voltage_v = "replace-with-voltage"',
+            "placeholder",
+        ),
+        (
+            "control_enabled = false",
+            'control_enabled = "false"',
+            "TOML boolean",
+        ),
     ],
 )
-def test_parallel_configuration_rejects_unsafe_values(
-    tmp_path: Path, key: str, value: str
+def test_main_settings_reject_placeholders_and_wrong_types(
+    tmp_path: Path, key: str, replacement: str, message: str
 ) -> None:
-    environment = _siglent_environment(tmp_path)
-    environment[key] = value
-
-    with pytest.raises(ConfigurationError):
-        SiglentConfiguration.from_environment(environment)
-
-
-def test_siglent_control_flag_is_required(tmp_path: Path) -> None:
-    environment = _siglent_environment(tmp_path)
-    del environment["DISPENSER_SIGLENT_CONTROL_ENABLED"]
-
-    with pytest.raises(ConfigurationError, match="CONTROL_ENABLED is required"):
-        SiglentConfiguration.from_environment(environment)
-
-
-def test_siglent_acceptance_context_is_explicit_and_allows_unloaded_hil(
-    tmp_path: Path,
-) -> None:
-    environment = _siglent_environment(tmp_path)
-    del environment["DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT"]
-
-    with pytest.raises(ConfigurationError, match="ACCEPTANCE_CONTEXT is required"):
-        SiglentConfiguration.from_environment(environment)
-
-    environment["DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT"] = "unloaded_hil"
-    latch_file = tmp_path / "unloaded-hil-trip.json"
-    environment["DISPENSER_SIGLENT_UNLOADED_HIL_STATE_FILE"] = str(latch_file)
-    configuration = SiglentConfiguration.from_environment(environment)
-    assert configuration.acceptance_context == "unloaded_hil"
-    assert configuration.unloaded_hil_state_file == latch_file.resolve()
-
-
-def test_unloaded_hil_state_path_is_required_and_context_bound(tmp_path: Path) -> None:
-    environment = _siglent_environment(tmp_path)
-    environment["DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT"] = "unloaded_hil"
-
-    with pytest.raises(ConfigurationError, match="STATE_FILE is required"):
-        SiglentConfiguration.from_environment(environment)
-
-    environment["DISPENSER_SIGLENT_UNLOADED_HIL_STATE_FILE"] = "relative.json"
-    with pytest.raises(ConfigurationError, match="must be absolute"):
-        SiglentConfiguration.from_environment(environment)
-
-    environment["DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT"] = "production_dispenser"
-    environment["DISPENSER_SIGLENT_UNLOADED_HIL_STATE_FILE"] = str(
-        tmp_path / "trip.json"
-    )
-    with pytest.raises(ConfigurationError, match="only valid for the unloaded_hil"):
-        SiglentConfiguration.from_environment(environment)
-
-
-def test_legacy_unloaded_hil_trip_latch_path_alias_is_compatible_but_exclusive(
-    tmp_path: Path,
-) -> None:
-    environment = _siglent_environment(tmp_path)
-    environment["DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT"] = "unloaded_hil"
-    state_file = tmp_path / "unloaded-hil-state.json"
-    environment["DISPENSER_SIGLENT_UNLOADED_HIL_TRIP_LATCH_FILE"] = str(state_file)
-
-    configuration = SiglentConfiguration.from_environment(environment)
-    assert configuration.unloaded_hil_state_file == state_file.resolve()
-
-    environment["DISPENSER_SIGLENT_UNLOADED_HIL_STATE_FILE"] = str(state_file)
-    with pytest.raises(ConfigurationError, match="Set only.*STATE_FILE"):
-        SiglentConfiguration.from_environment(environment)
-
-
-def test_expected_model_resolution_is_checked_at_startup(tmp_path: Path) -> None:
-    environment = _siglent_environment(tmp_path)
-    environment.update(
-        {
-            "DISPENSER_SIGLENT_EXPECTED_MODEL": "SPD3303X-E",
-            "DISPENSER_SIGLENT_COMPLIANCE_VOLTAGE_V": "10.001",
-        }
+    layout = _write_layout(tmp_path)
+    text = layout.mcp_settings_file.read_text(encoding="utf-8")
+    layout.mcp_settings_file.write_text(
+        text.replace(key, replacement), encoding="utf-8"
     )
 
-    with pytest.raises(ConfigurationError, match="resolution"):
-        SiglentConfiguration.from_environment(environment)
+    with pytest.raises(ConfigurationError, match=message):
+        OperatorConfiguration.from_toml(layout)
 
 
-def test_gateway_auth_defaults_to_canonical_development_settings(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("path_name", "old", "new", "message"),
+    [
+        (
+            "hicube",
+            'host = "192.0.2.10"',
+            'host = "replace-with-hicube-host"',
+            "placeholder",
+        ),
+        (
+            "gateway",
+            'identifier = "offline.test:8765"',
+            'identifier = "replace-with-gateway-identifier"',
+            "placeholder",
+        ),
+        ("hicube", "port = 4841", 'port = "4841"', "integer"),
+        ("gateway", "timeout_s = 2.0", 'timeout_s = "2.0"', "TOML number"),
+    ],
+)
+def test_device_settings_reject_placeholders_and_wrong_types(
+    tmp_path: Path, path_name: str, old: str, new: str, message: str
 ) -> None:
-    environment = _siglent_environment(tmp_path)
-    gateway_environment = environment.copy()
-    del environment["DISPENSER_SIGLENT_GATEWAY_AUTH_FILE"]
-    canonical = tmp_path / "settings/py-siglent-spd3000-gateway-auth.toml"
-    canonical.parent.mkdir()
-    canonical.write_text('token = "fixture"\n', encoding="utf-8")
-    monkeypatch.setattr(
-        config_module,
-        "DEFAULT_DEVELOPMENT_GATEWAY_AUTH_FILE",
-        canonical,
+    layout = _write_layout(tmp_path)
+    path = (
+        layout.hicube_settings_file
+        if path_name == "hicube"
+        else layout.siglent_gateway_settings_file
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8"
     )
 
-    configuration = SiglentConfiguration.from_environment(environment)
-    assert configuration.gateway_auth_file == canonical.resolve()
-
-    gateway_environment["DISPENSER_SIGLENT_CONNECTION"] = "socket"
-
-    with pytest.raises(ConfigurationError, match="must be one of: gateway"):
-        SiglentConfiguration.from_environment(gateway_environment)
+    with pytest.raises(ConfigurationError, match=message):
+        OperatorConfiguration.from_toml(layout)
 
 
-def test_gateway_auth_default_fails_closed_when_canonical_file_is_missing(
+def test_unloaded_hil_requires_operator_owned_absolute_state_path(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    environment = _siglent_environment(tmp_path)
-    del environment["DISPENSER_SIGLENT_GATEWAY_AUTH_FILE"]
-    monkeypatch.setattr(
-        config_module,
-        "DEFAULT_DEVELOPMENT_GATEWAY_AUTH_FILE",
-        tmp_path / "settings/py-siglent-spd3000-gateway-auth.toml",
+    layout = _write_layout(tmp_path, acceptance_context="unloaded_hil")
+    configuration = OperatorConfiguration.from_toml(layout)
+    assert configuration.siglent.unloaded_hil_state_file is not None
+    assert configuration.siglent.unloaded_hil_state_file.is_absolute()
+
+    text = layout.mcp_settings_file.read_text(encoding="utf-8")
+    text = "\n".join(
+        line
+        for line in text.splitlines()
+        if not line.startswith("unloaded_hil_state_file")
+    )
+    layout.mcp_settings_file.write_text(text + "\n", encoding="utf-8")
+    with pytest.raises(ConfigurationError, match="required for unloaded_hil"):
+        OperatorConfiguration.from_toml(layout)
+
+
+def test_production_context_rejects_unloaded_state_path(tmp_path: Path) -> None:
+    layout = _write_layout(
+        tmp_path,
+        main_extra=f'unloaded_hil_state_file = "{tmp_path.as_posix()}/state.json"\n',
+    )
+    with pytest.raises(ConfigurationError, match="only valid for unloaded_hil"):
+        OperatorConfiguration.from_toml(layout)
+
+
+@pytest.mark.parametrize("missing", ["hicube", "driver", "auth"])
+def test_fixed_repository_owned_paths_fail_closed(tmp_path: Path, missing: str) -> None:
+    layout = _write_layout(tmp_path)
+    target = {
+        "hicube": layout.hicube_client_file,
+        "driver": layout.siglent_driver_src / "siglent_spd3000" / "__init__.py",
+        "auth": layout.siglent_gateway_auth_file,
+    }[missing]
+    target.unlink()
+
+    with pytest.raises(ConfigurationError, match="missing"):
+        OperatorConfiguration.from_toml(layout)
+
+
+def test_invalid_toml_error_does_not_disclose_path_or_parser_detail(
+    tmp_path: Path,
+) -> None:
+    layout = _write_layout(tmp_path)
+    layout.hicube_settings_file.write_text("[", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as captured:
+        OperatorConfiguration.from_toml(layout)
+
+    assert str(captured.value) == "HiCube settings file is unreadable or invalid."
+    assert str(layout.project_root) not in str(captured.value)
+
+
+def test_source_layout_is_platform_native_and_has_no_operator_path_inputs(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "checkout with spaces"
+    layout = SourceLayout._for_testing(  # pyright: ignore[reportPrivateUsage]
+        root
     )
 
-    with pytest.raises(ConfigurationError, match="supported gateway authentication"):
-        SiglentConfiguration.from_environment(environment)
+    assert layout.mcp_settings_file == root.resolve() / "settings" / "mcp-settings.toml"
+    assert layout.hicube_client_file == (
+        root.resolve() / "dependencies" / "hicube" / "hicube_neo_client.py"
+    )
+    assert layout.siglent_driver_src == (
+        root.resolve() / "dependencies" / "py-siglent-spd3000" / "src"
+    )
+    assert layout.siglent_gateway_auth_file == (
+        root.resolve() / "settings" / "py-siglent-spd3000" / "gateway-auth.toml"
+    )

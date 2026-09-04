@@ -852,79 +852,10 @@ def test_python_runtime_manifest_covers_exact_runtime_tree(tmp_path: Path) -> No
     assert "file hash does not match" in rejected.stderr
 
 
-def test_launcher_offline_validation_imports_protected_layout(
-    tmp_path: Path,
-) -> None:
-    client_file = tmp_path / "hicube_neo_client.py"
-    client_file.write_text(
-        "class HiCubeNeoClient:\n    pass\n",
-        encoding="utf-8",
-    )
-    driver_src = tmp_path / "driver" / "src"
-    driver_package = driver_src / "siglent_spd3000"
-    driver_package.mkdir(parents=True)
-    (driver_package / "__init__.py").write_text(
-        "class SPD3000:\n    pass\n"
-        "class Channel:\n    pass\n"
-        "class ConnectionType:\n    pass\n"
-        "class OperatingMode:\n    pass\n"
-        "class OutputState:\n    pass\n"
-        "def load_gateway_auth(*args, **kwargs):\n    return 'fixture'\n",
-        encoding="utf-8",
-    )
-    auth_file = tmp_path / "gateway-auth.toml"
-    auth_file.write_text('token = "offline-placeholder"\n', encoding="utf-8")
-    profile = tmp_path / "offline.psd1"
-    profile.write_text(
-        f"""
-@{{
-    "DISPENSER_MCP_TRANSPORT" = "stdio"
-    "DISPENSER_HICUBE_CLIENT_FILE" = "{client_file}"
-    "DISPENSER_HICUBE_HOST" = "offline.test"
-    "DISPENSER_HICUBE_PORT" = "4840"
-    "DISPENSER_HICUBE_TIMEOUT_S" = "1.0"
-    "DISPENSER_SIGLENT_DRIVER_SRC" = "{driver_src}"
-    "DISPENSER_SIGLENT_CONNECTION" = "gateway"
-    "DISPENSER_SIGLENT_IDENTIFIER" = "offline.test:8765"
-    "DISPENSER_SIGLENT_GATEWAY_AUTH_FILE" = "{auth_file}"
-    "DISPENSER_SIGLENT_TIMEOUT_S" = "1.0"
-    "DISPENSER_SIGLENT_MIN_COMMAND_INTERVAL_MS" = "100.0"
-    "DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT" = "production_dispenser"
-    "DISPENSER_SIGLENT_TOPOLOGY" = "parallel_ch1"
-    "DISPENSER_SIGLENT_CHANNEL" = "CH1"
-    "DISPENSER_SIGLENT_EXPECTED_MODEL" = "SPD3303X"
-    "DISPENSER_SIGLENT_EXPECTED_SERIAL_NUMBER" = "SPD-OFFLINE"
-    "DISPENSER_SIGLENT_COMPLIANCE_VOLTAGE_V" = "1.0"
-    "DISPENSER_SIGLENT_MAX_LOAD_CURRENT_A" = "0.2"
-    "DISPENSER_SIGLENT_UPWARD_STEP_A" = "0.2"
-    "DISPENSER_SIGLENT_CONTROL_ENABLED" = "false"
-}}
-""".lstrip(),
-        encoding="utf-8",
-    )
+def test_current_offline_validation_is_toml_driven() -> None:
+    deployment_check = (
+        PROJECT_ROOT / "src" / "dispenser_conditioning_mcp" / "deployment_check.py"
+    ).read_text(encoding="utf-8")
 
-    result = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(LAUNCHER),
-            "-ProfilePath",
-            str(profile),
-            "-PythonPath",
-            sys.executable,
-            "-ValidateOnly",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "Offline deployment validation passed."
-    assert result.stderr == ""
+    assert "OperatorConfiguration.from_toml()" in deployment_check
+    assert "from_environment" not in deployment_check

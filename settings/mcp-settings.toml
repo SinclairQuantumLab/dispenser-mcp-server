@@ -1,0 +1,21 @@
+# MCP process and deployment-specific safety settings.
+schema_version = 1
+acceptance_context = "replace-with-production_dispenser-or-unloaded_hil"
+expected_serial_number = "replace-with-verified-serial"
+compliance_voltage_v = "replace-with-approved-voltage"
+control_enabled = false
+transport = "stdio"
+
+# Required only when acceptance_context = "unloaded_hil". The operator must
+# initialize and protect this state file outside the MCP process.
+# unloaded_hil_state_file = "/absolute/protected/unloaded-hil-state.json"
+
+# Uncomment only when transport = "streamable-http". The server still binds
+# loopback only. Authentication/tunneling remains operator-owned.
+# [streamable_http]
+# bind_host = "127.0.0.1"
+# port = 8000
+# path = "/mcp"
+# trust_mode = "loopback_only"
+# allowed_hosts = []
+# allowed_origins = []

@@ -1,0 +1,5 @@
+# py-siglent-spd3000 authenticated gateway settings.
+schema_version = 1
+identifier = "replace-with-gateway-identifier"
+timeout_s = 5.0
+minimum_command_interval_ms = 100.0

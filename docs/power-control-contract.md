@@ -26,14 +26,11 @@ audit log, or physical interlock.
 
 ## Hidden immutable policy
 
-Startup must bind the exact expected model and serial, one acceptance context,
-one topology and native channel, one fixed compliance voltage, an operator
-load-current ceiling, an exact topology-specific upward step, and an explicit
-control-enable flag. `unloaded_hil` additionally requires one absolute protected
-operation/trip state path, configured with
-`DISPENSER_SIGLENT_UNLOADED_HIL_STATE_FILE`. The former
-`DISPENSER_SIGLENT_UNLOADED_HIL_TRIP_LATCH_FILE` name remains a mutually
-exclusive compatibility alias in v0.4.3.
+Startup TOML must bind the exact expected serial, one acceptance context, one
+fixed compliance voltage, and an explicit control-enable flag. The expected
+model, topology, channel, current ceilings, and upward step are contract
+constants. `unloaded_hil` additionally requires one absolute protected
+`unloaded_hil_state_file` in `settings/mcp-settings.toml`.
 The MCP client cannot read or change connection details and cannot change any
 policy value.
 
@@ -47,7 +44,7 @@ load-current limit / 2. This deployment adds a
 2.4 A native/4.8 A load-current ceiling, so accepted targets are bounded by:
 
 ```text
-min(operator ceiling, topology hardware ceiling, 4.8 A)
+min(topology hardware ceiling, fixed deployment/workflow ceiling of 4.8 A)
 ```
 
 Only commanded current is topology-scaled. Native CH1 current, voltage, and
@@ -229,12 +226,14 @@ the already-durable pending record and performs recovery in this order:
    inclusive fixed band before reporting verified recovery; and
 6. replace the pending record with the structurally valid trip record.
 
-Hardware shutdown therefore does not wait for trip-record persistence. If trip
-replacement fails, the pending record remains the durable fail-closed state.
-Only when the original operation succeeds and its fresh measured-current query is
-finite and in-band does the provider atomically replace pending with a
-completed-operation record. The state file is never deleted during normal MCP
-operation.
+Hardware shutdown therefore does not wait for trip-record persistence. Before
+device access, the provider durably publishes both the primary pending record
+and a separate pending guard in the same protected directory. If trip
+replacement fails, either pending representation remains fail-closed. Only when
+the original operation succeeds and its fresh measured-current query is finite
+and in-band does the provider publish, directory-sync, and verify a
+completed-operation record before retiring the guard. The primary state file is
+never deleted during normal MCP operation.
 
 The `0.001 A` absolute threshold is a hard-coded MCP safety policy and appears in
 structured safety limits; it is not model- or startup-configurable. It matches one
@@ -282,24 +281,35 @@ denying the execution agent direct filesystem access. Removing or replacing a
 trip or unfinished pending record is an out-of-band privileged reset, never an
 MCP action. Physical-button integration remains pending.
 
-The local-file backend stages and `fsync`s a new record before atomic
-replacement. Windows can transiently deny replacement while a scanner holds a
+The local-file backend stages and `fsync`s a new primary record before atomic
+replacement. A separately `fsync`ed pending guard remains authoritative while a
+safe completed/trip replacement is published and verified. If completion
+publication reports any error—including failure of the POSIX parent-directory
+`fsync` after `os.replace`—a fresh provider observes the surviving guard as an
+unfinished operation and denies mutation before device access. After a safe
+replacement is durable, a lost guard-deletion update can only resurrect the
+guard after a crash and cause a conservative fail-closed restart; it cannot
+create a false unlatched state.
+
+Windows can transiently deny replacement while a scanner holds a
 non-delete-sharing handle. The backend retries only `WinError 5`, `32`, and `33`
 with fixed delays of 5, 10, 20, and 40 ms. General permission, path, validation,
 and persistence errors are not retried. Pending-marker retries happen before a
 device session can open. Trip-record retries happen only after both outputs are
 verified off, both native current setpoints are verified zero, and recovery
 current is in-band, so they cannot delay trip shutdown. Exhaustion preserves the
-previous pending record and the controller remains fail-closed.
+previous pending state and the controller remains fail-closed. The guard filename
+is derived internally from the operator-bound state path and is not configurable
+through MCP. A privileged out-of-band reset must treat the primary state and any
+surviving guard as one safety-state boundary after physical verification.
 
 ## Error and lifecycle behavior
 
 Each tool call creates, uses, and closes one semantic-driver session. This
 deployment accepts only the authenticated gateway connection. Gateway
-authentication is loaded from an operator-selected untracked local file. The
-development default is the ignored
-`settings/py-siglent-spd3000-gateway-auth.toml`; deployed layouts may bind a
-different absolute path. The token never enters tool arguments or results. A process
+authentication is loaded from the fixed untracked local file
+`settings/py-siglent-spd3000/gateway-auth.toml`. The token never enters tool
+arguments or results. A process
 lock prevents overlapping control sequences inside this MCP process. The file
 contains one root `token` string and is parsed by the driver's strict
 `load_gateway_auth(..., required=True)` implementation rather than by duplicate
@@ -327,8 +337,8 @@ selection, interlock reset, or bypass.
 
 ## Minimal unloaded-HIL acceptance sequence
 
-The recommended first-run policy uses a 1.0 V fixed compliance voltage and a
-lower 0.2 A operator load-current ceiling. Parallel tracking mode must be set
+The recommended first-run procedure uses an operator-approved 1.0 V fixed
+compliance voltage and only one 0.2 A commanded-load step. Parallel tracking mode must be set
 out-of-band with outputs off because MCP intentionally exposes no tracking
 control.
 

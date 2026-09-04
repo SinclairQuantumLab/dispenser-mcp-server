@@ -1,3 +1,3 @@
-# Copy this file to py-siglent-spd3000-gateway-auth.toml in this directory.
+# Copy this file to gateway-auth.toml in this directory.
 # Keep the populated file untracked and outside agent-visible output.
 token = "replace-with-operator-managed-token"

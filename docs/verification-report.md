@@ -1,9 +1,10 @@
 # Verification Report
 
-> **Current R&D dependency note:** The live development tree now uses the
-> parent-pinned `dependencies/py-siglent-spd3000` Git submodule directly through
-> its `src` directory and installs all of its declared dependencies through
-> `uv sync`. Built-wheel and release-manifest passages below record earlier
+> **Current R&D startup note:** Package 0.6.0 loads three strict TOML settings
+> files from the source checkout and derives the vendored HiCube client,
+> parent-pinned Siglent submodule source, and untracked authentication path.
+> It installs all declared dependencies through `uv sync`. Environment-profile,
+> built-wheel deployment, and release-manifest passages below record earlier
 > deployment-hardening work and are not the current research startup path.
 
 Date: 2026-09-04 (America/Chicago)
@@ -12,7 +13,7 @@ Date: 2026-09-04 (America/Chicago)
 
 - Python 3.13 under `uv`
 - MCP Python SDK 2.1.1, default stdio plus loopback Streamable HTTP startup
-- Package `dispenser-conditioning-mcp` 0.5.1 staged deployment-security candidate
+- Package `dispenser-conditioning-mcp` 0.6.0 TOML operator-interface candidate
 - Public six-tool MCP contract remains v0.4.3 with identical schemas, literals,
   structured results, and power-safety semantics
 - Platform-independent wheel and source distribution
@@ -28,18 +29,39 @@ uv lock --check                  PASS
 uv run ruff format --check .    PASS
 uv run ruff check .             PASS
 uv run pyright                  PASS (0 errors, 0 warnings)
-uv run pytest -q                PASS (217 tests)
+uv run pytest -q                PASS (213 tests)
 uv build                        PASS (sdist and wheel)
 isolated wheel/import smoke     PASS
 exact 37-distribution inventory PASS
 packed stdio/deployment smoke   PASS (6 tests)
-MCP Inspector 2.5.0 strict      PASS (both contexts; 6 tools each)
+MCP Inspector strict tools/list PASS (production context; 6 tools)
 Siglent upstream suite          PASS (142 non-hardware tests)
 current-driver contract smoke   PASS (strict auth plus verified semantic batches)
 live HiCube MCP read            PASS
 live Siglent MCP read           PASS (authenticated stdio tool call)
 supervised unloaded-HIL MCP run PASS (completed before durable interlock)
+post-publication fsync regression PASS (fresh process remains fail-closed)
 ```
+
+The durable-state regression injects a parent-directory `fsync` failure after
+the completed-operation record has already replaced the primary pending record.
+The call reports failure, the separately durable pending guard survives, and a
+new controller rejects mutation before its session factory is called. Additional
+fault injection covers guard creation, guard-file and directory synchronization,
+completed-record staging/replacement/verification, guard retirement, trip
+publication, and repeated successful operations. The six-tool public contract
+was unchanged by this internal crash-consistency repair. Package 0.6.0 later
+changed only the operator configuration interface.
+
+The 0.6.0 TOML tests cover closed schemas, strict TOML types, placeholder and
+missing-value rejection, safe stdio/control-disabled defaults, context-bound
+absolute unloaded-HIL state, fixed repository source/auth paths, and sanitized
+parse errors. A source-checkout stdio process built from generated offline TOML
+fixtures advertised six tools and completed both read calls. Inspector strict
+`tools/list` used offline identifiers and did not invoke a device tool. The
+source distribution contained all four tracked settings/templates and no
+populated `gateway-auth.toml`; an isolated Python 3.13 environment imported the
+built 0.6.0 wheel successfully.
 
 The isolated packed smoke command installed the built 0.5.1 wheel and its
 dependencies into an isolated environment, started the packaged stdio entry

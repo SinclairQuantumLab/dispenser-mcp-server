@@ -1,32 +1,28 @@
 # Transport and Deployment Contract
 
-Package version 0.5.1 retains the startup-only transport boundary and adds a
-manifest-bound, index-disabled dedicated-host Python installation, complete
-base-runtime tree validation, and a recursive exact ACL/owner boundary. The
-Python-payload manifest covers only the lock, inventory, MCP wheel, and exact
-dependency wheelhouse; other deployment artifacts keep separate approved hashes.
-This does not change the six-tool conditioning contract or the v0.4.3
-power-safety semantics.
+Package version 0.6.0 replaces environment-variable startup configuration with
+strict repository-local TOML documents. This does not change the six-tool
+conditioning contract or the v0.4.3 power-safety semantics.
 
 ## Startup settings
 
-| Variable | Default | Contract |
+All values below are keys in `settings/mcp-settings.toml`. Unknown keys or wrong
+TOML types reject startup.
+
+| Key | Default | Contract |
 | --- | --- | --- |
-| `DISPENSER_MCP_TRANSPORT` | `stdio` | Exact `stdio` or `streamable-http`; all other values, including deprecated SSE, are rejected |
-| `DISPENSER_MCP_HTTP_BIND_HOST` | `127.0.0.1` | HTTP only; must resolve syntactically to an explicit loopback literal/name |
-| `DISPENSER_MCP_HTTP_PORT` | `8000` | HTTP only; integer 1024–65535 |
-| `DISPENSER_MCP_HTTP_PATH` | `/mcp` | HTTP only; one absolute, non-root path without query, fragment, whitespace, backslash, or trailing slash |
-| `DISPENSER_MCP_HTTP_TRUST_MODE` | `loopback_only` | Exact `loopback_only`, `authenticated_ssh_tunnel`, or `authenticated_reverse_proxy` |
-| `DISPENSER_MCP_HTTP_ALLOWED_HOSTS` | none | Reverse-proxy mode only; comma-separated exact Host header values with no wildcard |
-| `DISPENSER_MCP_HTTP_ALLOWED_ORIGINS` | none | Reverse-proxy mode only; comma-separated exact HTTPS origins with no wildcard |
+| `transport` | `stdio` | Exact `stdio` or `streamable-http`; all other values are rejected |
+| `control_enabled` | `false` | Strict TOML boolean; loopback-only HTTP cannot enable control |
+| `streamable_http.bind_host` | `127.0.0.1` | HTTP only; must be an explicit loopback literal/name |
+| `streamable_http.port` | `8000` | HTTP only; integer 1024–65535 |
+| `streamable_http.path` | `/mcp` | HTTP only; one absolute, non-root path without query, fragment, whitespace, backslash, or trailing slash |
+| `streamable_http.trust_mode` | `loopback_only` | Exact `loopback_only`, `authenticated_ssh_tunnel`, or `authenticated_reverse_proxy` |
+| `streamable_http.allowed_hosts` | `[]` | Reverse-proxy mode only; exact Host strings with no wildcard |
+| `streamable_http.allowed_origins` | `[]` | Reverse-proxy mode only; exact HTTPS origin strings with no wildcard |
 
-HTTP startup also requires the existing
-`DISPENSER_SIGLENT_CONTROL_ENABLED=true|false` policy explicitly. Missing or
-invalid values reject startup before the configured MCP application imports.
-
-Stdio remains fully backward-compatible when all HTTP-only variables are
-absent. Supplying an HTTP-only variable while stdio is selected is rejected so
-stale deployment settings cannot be silently ignored.
+The `streamable_http` table is rejected while stdio is selected, preventing
+stale HTTP settings from being silently ignored. HTTP settings cannot be passed
+as MCP arguments, CLI flags, or environment variables.
 
 ## Fixed HTTP behavior
 
@@ -55,9 +51,9 @@ writer before forwarding.
 ## Process boundary
 
 Test-unit unloaded HIL and production dispenser deployments use separate
-processes, profiles, auth paths, ports, and acceptance contexts. The HIL process
+processes, source checkouts/settings, auth paths, ports, and acceptance contexts. The HIL process
 alone has its own unique durable state path. Only one process may target one PSU
-at a time. Process lifecycle, environment, credentials, authentication files,
+at a time. Process lifecycle, settings, credentials, authentication files,
 durable state, reset, logs, and network bridge remain operator-owned.
 
 The MCP client receives only an authenticated endpoint and the production tool

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dispenser-conditioning-mcp"
-version = "0.5.1"
+version = "0.6.0"
 description = "Pressure observation and bounded power-control MCP for dispenser conditioning"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -35,9 +35,9 @@ packages = ["src/dispenser_conditioning_mcp"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/.env.example",
     "/AGENTS.md",
     "/README.md",
+    "/settings",
     "/deployment",
     "/docs",
     "/pyproject.toml",
@@ -52,6 +52,7 @@ exclude = [
     "/.venv",
     "/dist",
     "/dependencies",
+    "**/gateway-auth.toml",
     "**/__pycache__",
     "**/*.pyc",
 ]
@@ -68,6 +69,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 88
 target-version = "py313"
+extend-exclude = ["dependencies"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP"]

@@ -1,10 +1,10 @@
-"""Operator-only startup configuration for pressure and power integrations."""
+"""Strict operator-owned TOML configuration for the MCP process."""
 
 from __future__ import annotations
 
 import ipaddress
 import math
-import os
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -13,37 +13,191 @@ from typing import Literal, cast
 
 from dispenser_conditioning_mcp.power_domain import PowerAcceptanceContext
 
+SETTINGS_SCHEMA_VERSION = 1
 DEFAULT_OPC_UA_PORT = 4840
 DEFAULT_TIMEOUT_S = 5.0
 DEFAULT_SIGLENT_TIMEOUT_S = 5.0
 DEFAULT_SIGLENT_COMMAND_INTERVAL_MS = 100.0
-DEFAULT_DEVELOPMENT_HICUBE_CLIENT_FILE = (
-    Path(__file__).resolve().parents[2]
-    / "dependencies"
-    / "hicube"
-    / "hicube_neo_client.py"
-)
 PARALLEL_NATIVE_CURRENT_CEILING_A = 2.4
-PARALLEL_LOAD_CURRENT_CEILING_A = 2 * PARALLEL_NATIVE_CURRENT_CEILING_A
+PARALLEL_LOAD_CURRENT_CEILING_A = 4.8
 PARALLEL_LOAD_UPWARD_STEP_A = 0.2
-DEFAULT_DEVELOPMENT_GATEWAY_AUTH_FILE = (
-    Path(__file__).resolve().parents[2]
-    / "settings"
-    / "py-siglent-spd3000-gateway-auth.toml"
-)
+FIXED_SIGLENT_CONNECTION = "gateway"
+FIXED_SIGLENT_TOPOLOGY = "parallel_ch1"
+FIXED_SIGLENT_CHANNEL = "CH1"
+FIXED_SIGLENT_EXPECTED_MODEL = "SPD3303X"
 
 SiglentTopology = Literal["parallel_ch1"]
 SiglentConnection = Literal["gateway"]
 SiglentChannel = Literal["CH1"]
+McpTransport = Literal["stdio", "streamable-http"]
+HttpTrustMode = Literal[
+    "loopback_only",
+    "authenticated_ssh_tunnel",
+    "authenticated_reverse_proxy",
+]
 
 
 class ConfigurationError(ValueError):
-    """Report invalid or missing operator startup configuration."""
+    """Report invalid operator startup configuration without local details."""
+
+
+@dataclass(frozen=True)
+class SourceLayout:
+    """Repository-owned paths resolved from the installed source checkout."""
+
+    project_root: Path
+
+    @classmethod
+    def discover(cls) -> SourceLayout:
+        """Resolve the checkout containing the editable installed package."""
+
+        return cls(project_root=Path(__file__).resolve().parents[2])
+
+    @classmethod
+    def _for_testing(cls, project_root: Path) -> SourceLayout:
+        """Build an explicit layout only for injected offline tests."""
+
+        return cls(project_root=project_root.resolve())
+
+    @property
+    def settings_directory(self) -> Path:
+        return self.project_root / "settings"
+
+    @property
+    def mcp_settings_file(self) -> Path:
+        return self.settings_directory / "mcp-settings.toml"
+
+    @property
+    def hicube_settings_file(self) -> Path:
+        return self.settings_directory / "hicube-neo-client-settings.toml"
+
+    @property
+    def siglent_settings_directory(self) -> Path:
+        return self.settings_directory / "py-siglent-spd3000"
+
+    @property
+    def siglent_gateway_settings_file(self) -> Path:
+        return self.siglent_settings_directory / "gateway-settings.toml"
+
+    @property
+    def siglent_gateway_auth_file(self) -> Path:
+        return self.siglent_settings_directory / "gateway-auth.toml"
+
+    @property
+    def hicube_client_file(self) -> Path:
+        return self.project_root / "dependencies" / "hicube" / "hicube_neo_client.py"
+
+    @property
+    def siglent_driver_src(self) -> Path:
+        return self.project_root / "dependencies" / "py-siglent-spd3000" / "src"
+
+
+@dataclass(frozen=True)
+class StreamableHttpSettings:
+    """Reviewed HTTP settings parsed from the main settings file."""
+
+    bind_host: str = "127.0.0.1"
+    port: int = 8000
+    path: str = "/mcp"
+    trust_mode: HttpTrustMode = "loopback_only"
+    allowed_hosts: tuple[str, ...] = ()
+    allowed_origins: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class McpStartupConfiguration:
+    """MCP transport and deployment-specific safety settings."""
+
+    acceptance_context: PowerAcceptanceContext
+    expected_serial_number: str
+    compliance_voltage_v: float
+    control_enabled: bool = False
+    transport: McpTransport = "stdio"
+    unloaded_hil_state_file: Path | None = None
+    streamable_http: StreamableHttpSettings | None = None
+
+    @classmethod
+    def from_toml(cls, layout: SourceLayout) -> McpStartupConfiguration:
+        """Load the closed main settings document."""
+
+        document = _read_toml(layout.mcp_settings_file, "MCP settings")
+        _closed_keys(
+            document,
+            {
+                "schema_version",
+                "acceptance_context",
+                "expected_serial_number",
+                "compliance_voltage_v",
+                "control_enabled",
+                "transport",
+                "unloaded_hil_state_file",
+                "streamable_http",
+            },
+            "MCP settings",
+        )
+        _schema_version(document, "MCP settings")
+        acceptance_context = cast(
+            PowerAcceptanceContext,
+            _choice(
+                document.get("acceptance_context"),
+                name="acceptance_context",
+                choices=("production_dispenser", "unloaded_hil"),
+            ),
+        )
+        expected_serial_number = _required_text(
+            document.get("expected_serial_number"),
+            name="expected_serial_number",
+            maximum_length=128,
+        )
+        compliance_voltage_v = _required_number(
+            document.get("compliance_voltage_v"),
+            name="compliance_voltage_v",
+            minimum=0.0,
+            maximum=32.0,
+        )
+        _require_resolution(
+            compliance_voltage_v,
+            resolution=0.001,
+            name="compliance_voltage_v",
+        )
+        control_enabled = _boolean(
+            document.get("control_enabled", False), name="control_enabled"
+        )
+        transport = cast(
+            McpTransport,
+            _choice(
+                document.get("transport", "stdio"),
+                name="transport",
+                choices=("stdio", "streamable-http"),
+            ),
+        )
+        unloaded_hil_state_file = _unloaded_hil_state_file(
+            document.get("unloaded_hil_state_file"),
+            acceptance_context=acceptance_context,
+        )
+        raw_http = document.get("streamable_http")
+        if transport == "stdio":
+            if raw_http is not None:
+                raise ConfigurationError(
+                    "streamable_http settings are invalid when transport is stdio."
+                )
+            http = None
+        else:
+            http = _streamable_http_settings(raw_http)
+        return cls(
+            acceptance_context=acceptance_context,
+            expected_serial_number=expected_serial_number,
+            compliance_voltage_v=compliance_voltage_v,
+            control_enabled=control_enabled,
+            transport=transport,
+            unloaded_hil_state_file=unloaded_hil_state_file,
+            streamable_http=http,
+        )
 
 
 @dataclass(frozen=True)
 class HiCubeConfiguration:
-    """Validated local settings that are never exposed as MCP tool arguments."""
+    """Validated HiCube settings and the fixed vendored client path."""
 
     client_file: Path
     host: str
@@ -51,33 +205,34 @@ class HiCubeConfiguration:
     timeout_s: float = DEFAULT_TIMEOUT_S
 
     @classmethod
-    def from_environment(
-        cls, environment: Mapping[str, str] | None = None
-    ) -> HiCubeConfiguration:
-        """Load validated settings from the process environment."""
-
-        values = os.environ if environment is None else environment
-        client_file = _client_file(values.get("DISPENSER_HICUBE_CLIENT_FILE"))
-        host = _host(values.get("DISPENSER_HICUBE_HOST"))
-        port = _integer(
-            values.get("DISPENSER_HICUBE_PORT"),
-            name="DISPENSER_HICUBE_PORT",
-            default=DEFAULT_OPC_UA_PORT,
-            minimum=1,
-            maximum=65535,
+    def from_toml(cls, layout: SourceLayout) -> HiCubeConfiguration:
+        document = _read_toml(layout.hicube_settings_file, "HiCube settings")
+        _closed_keys(
+            document,
+            {"schema_version", "host", "port", "timeout_s"},
+            "HiCube settings",
         )
-        timeout_s = _number(
-            values.get("DISPENSER_HICUBE_TIMEOUT_S"),
-            name="DISPENSER_HICUBE_TIMEOUT_S",
-            default=DEFAULT_TIMEOUT_S,
-            minimum=0.1,
-            maximum=60.0,
-        )
+        _schema_version(document, "HiCube settings")
+        client_file = layout.hicube_client_file
+        if client_file.name != "hicube_neo_client.py" or not client_file.is_file():
+            raise ConfigurationError(
+                "The repository-owned HiCube client file is missing."
+            )
         return cls(
-            client_file=client_file,
-            host=host,
-            port=port,
-            timeout_s=timeout_s,
+            client_file=client_file.resolve(),
+            host=_host(document.get("host")),
+            port=_integer(
+                document.get("port", DEFAULT_OPC_UA_PORT),
+                name="port",
+                minimum=1,
+                maximum=65535,
+            ),
+            timeout_s=_number(
+                document.get("timeout_s", DEFAULT_TIMEOUT_S),
+                name="timeout_s",
+                minimum=0.1,
+                maximum=60.0,
+            ),
         )
 
 
@@ -104,348 +259,288 @@ class SiglentConfiguration:
 
     @property
     def load_current_factor(self) -> Literal[2]:
-        """Translate one native-channel current setpoint to load-current limit."""
-
         return 2
 
     @classmethod
-    def from_environment(
-        cls, environment: Mapping[str, str] | None = None
+    def from_toml(
+        cls,
+        layout: SourceLayout,
+        startup: McpStartupConfiguration,
     ) -> SiglentConfiguration:
-        """Load a default-deny power-control policy from the environment."""
-
-        values = os.environ if environment is None else environment
-        driver_src = _driver_src(values.get("DISPENSER_SIGLENT_DRIVER_SRC"))
-        connection = _choice(
-            values.get("DISPENSER_SIGLENT_CONNECTION"),
-            name="DISPENSER_SIGLENT_CONNECTION",
-            choices=("gateway",),
+        document = _read_toml(
+            layout.siglent_gateway_settings_file, "Siglent gateway settings"
         )
-        identifier = _required_text(
-            values.get("DISPENSER_SIGLENT_IDENTIFIER"),
-            name="DISPENSER_SIGLENT_IDENTIFIER",
-            maximum_length=512,
+        _closed_keys(
+            document,
+            {
+                "schema_version",
+                "identifier",
+                "timeout_s",
+                "minimum_command_interval_ms",
+            },
+            "Siglent gateway settings",
         )
-        gateway_auth_file = _gateway_auth_file(
-            values.get("DISPENSER_SIGLENT_GATEWAY_AUTH_FILE"),
-        )
-        if values.get("DISPENSER_SIGLENT_VISA_BACKEND") is not None:
+        _schema_version(document, "Siglent gateway settings")
+        driver_src = layout.siglent_driver_src
+        if not (driver_src / "siglent_spd3000" / "__init__.py").is_file():
             raise ConfigurationError(
-                "DISPENSER_SIGLENT_VISA_BACKEND is unsupported by the "
-                "gateway-only deployment."
+                "The repository-owned Siglent driver submodule is missing."
             )
-        acceptance_context = _choice(
-            values.get("DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT"),
-            name="DISPENSER_SIGLENT_ACCEPTANCE_CONTEXT",
-            choices=("production_dispenser", "unloaded_hil"),
-        )
-        state_file_name = "DISPENSER_SIGLENT_UNLOADED_HIL_STATE_FILE"
-        legacy_state_file_name = "DISPENSER_SIGLENT_UNLOADED_HIL_TRIP_LATCH_FILE"
-        state_file_value = values.get(state_file_name)
-        legacy_state_file_value = values.get(legacy_state_file_name)
-        if state_file_value is not None and legacy_state_file_value is not None:
+        auth_file = layout.siglent_gateway_auth_file
+        if auth_file.name != "gateway-auth.toml" or not auth_file.is_file():
             raise ConfigurationError(
-                f"Set only {state_file_name}; do not also set the legacy "
-                f"{legacy_state_file_name} alias."
+                "The operator-owned Siglent gateway authentication file is missing."
             )
-        if state_file_value is None and legacy_state_file_value is not None:
-            state_file_name = legacy_state_file_name
-            state_file_value = legacy_state_file_value
-        unloaded_hil_state_file = _unloaded_hil_state_file(
-            state_file_value,
-            setting_name=state_file_name,
-            acceptance_context=cast(PowerAcceptanceContext, acceptance_context),
-        )
-        topology = _choice(
-            values.get("DISPENSER_SIGLENT_TOPOLOGY"),
-            name="DISPENSER_SIGLENT_TOPOLOGY",
-            choices=("parallel_ch1",),
-        )
-        channel = _choice(
-            values.get("DISPENSER_SIGLENT_CHANNEL"),
-            name="DISPENSER_SIGLENT_CHANNEL",
-            choices=("CH1",),
-        )
-        expected_model = _choice(
-            values.get("DISPENSER_SIGLENT_EXPECTED_MODEL"),
-            name="DISPENSER_SIGLENT_EXPECTED_MODEL",
-            choices=("SPD3303X", "SPD3303X-E", "SPD3303C"),
-        )
-        expected_serial_number = _required_text(
-            values.get("DISPENSER_SIGLENT_EXPECTED_SERIAL_NUMBER"),
-            name="DISPENSER_SIGLENT_EXPECTED_SERIAL_NUMBER",
-            maximum_length=128,
-        )
-        control_enabled = _required_boolean(
-            values.get("DISPENSER_SIGLENT_CONTROL_ENABLED"),
-            name="DISPENSER_SIGLENT_CONTROL_ENABLED",
-        )
-        compliance_voltage_v = _required_number(
-            values.get("DISPENSER_SIGLENT_COMPLIANCE_VOLTAGE_V"),
-            name="DISPENSER_SIGLENT_COMPLIANCE_VOLTAGE_V",
-            minimum=0.0,
-            maximum=32.0,
-        )
-        load_factor = 2
-        max_load_current_a = _required_number(
-            values.get("DISPENSER_SIGLENT_MAX_LOAD_CURRENT_A"),
-            name="DISPENSER_SIGLENT_MAX_LOAD_CURRENT_A",
-            minimum=0.0,
-            maximum=PARALLEL_LOAD_CURRENT_CEILING_A,
-            exclusive_minimum=True,
-        )
-        required_upward_step = PARALLEL_LOAD_UPWARD_STEP_A
-        upward_step_a = _required_number(
-            values.get("DISPENSER_SIGLENT_UPWARD_STEP_A"),
-            name="DISPENSER_SIGLENT_UPWARD_STEP_A",
-            minimum=0.0,
-            maximum=required_upward_step,
-            exclusive_minimum=True,
-        )
-        timeout_s = _number(
-            values.get("DISPENSER_SIGLENT_TIMEOUT_S"),
-            name="DISPENSER_SIGLENT_TIMEOUT_S",
-            default=DEFAULT_SIGLENT_TIMEOUT_S,
-            minimum=0.1,
-            maximum=60.0,
-        )
-        min_command_interval_ms = _number(
-            values.get("DISPENSER_SIGLENT_MIN_COMMAND_INTERVAL_MS"),
-            name="DISPENSER_SIGLENT_MIN_COMMAND_INTERVAL_MS",
-            default=DEFAULT_SIGLENT_COMMAND_INTERVAL_MS,
-            minimum=10.0,
-            maximum=100.0,
-        )
-        if expected_model == "SPD3303C":
-            raise ConfigurationError(
-                "parallel_ch1 is not enabled for the unverified SPD3303C model."
-            )
-        if not math.isclose(upward_step_a, required_upward_step):
-            raise ConfigurationError(
-                "DISPENSER_SIGLENT_UPWARD_STEP_A must equal the fixed step for "
-                "the selected topology."
-            )
-        voltage_resolution, current_resolution = {
-            "SPD3303X": (0.001, 0.001),
-            "SPD3303X-E": (0.01, 0.01),
-            "SPD3303C": (0.01, 0.01),
-        }[expected_model]
-        _require_resolution(
-            compliance_voltage_v,
-            resolution=voltage_resolution,
-            name="DISPENSER_SIGLENT_COMPLIANCE_VOLTAGE_V",
-        )
-        _require_resolution(
-            max_load_current_a / load_factor,
-            resolution=current_resolution,
-            name="DISPENSER_SIGLENT_MAX_LOAD_CURRENT_A after topology translation",
-        )
-        _require_resolution(
-            upward_step_a / load_factor,
-            resolution=current_resolution,
-            name="DISPENSER_SIGLENT_UPWARD_STEP_A after topology translation",
-        )
-
         return cls(
-            driver_src=driver_src,
-            connection=cast(SiglentConnection, connection),
-            identifier=identifier,
-            gateway_auth_file=gateway_auth_file,
-            acceptance_context=cast(PowerAcceptanceContext, acceptance_context),
-            topology=cast(SiglentTopology, topology),
-            channel=cast(SiglentChannel, channel),
-            expected_model=expected_model,
-            expected_serial_number=expected_serial_number,
-            compliance_voltage_v=compliance_voltage_v,
-            max_load_current_a=max_load_current_a,
-            upward_step_a=upward_step_a,
-            control_enabled=control_enabled,
-            unloaded_hil_state_file=unloaded_hil_state_file,
-            timeout_s=timeout_s,
-            min_command_interval_ms=min_command_interval_ms,
+            driver_src=driver_src.resolve(),
+            connection="gateway",
+            identifier=_required_text(
+                document.get("identifier"),
+                name="identifier",
+                maximum_length=512,
+            ),
+            gateway_auth_file=auth_file.resolve(),
+            acceptance_context=startup.acceptance_context,
+            topology="parallel_ch1",
+            channel="CH1",
+            expected_model="SPD3303X",
+            expected_serial_number=startup.expected_serial_number,
+            compliance_voltage_v=startup.compliance_voltage_v,
+            max_load_current_a=PARALLEL_LOAD_CURRENT_CEILING_A,
+            upward_step_a=PARALLEL_LOAD_UPWARD_STEP_A,
+            control_enabled=startup.control_enabled,
+            unloaded_hil_state_file=startup.unloaded_hil_state_file,
+            timeout_s=_number(
+                document.get("timeout_s", DEFAULT_SIGLENT_TIMEOUT_S),
+                name="timeout_s",
+                minimum=0.1,
+                maximum=60.0,
+            ),
+            min_command_interval_ms=_number(
+                document.get(
+                    "minimum_command_interval_ms",
+                    DEFAULT_SIGLENT_COMMAND_INTERVAL_MS,
+                ),
+                name="minimum_command_interval_ms",
+                minimum=10.0,
+                maximum=100.0,
+            ),
         )
 
 
-def _client_file(raw_value: str | None) -> Path:
-    if raw_value is None or not raw_value.strip():
-        path = DEFAULT_DEVELOPMENT_HICUBE_CLIENT_FILE
-    else:
-        path = Path(raw_value).expanduser()
-    if not path.is_absolute():
-        raise ConfigurationError("DISPENSER_HICUBE_CLIENT_FILE must be absolute.")
-    if path.name != "hicube_neo_client.py":
-        raise ConfigurationError(
-            "DISPENSER_HICUBE_CLIENT_FILE must name hicube_neo_client.py."
+@dataclass(frozen=True)
+class OperatorConfiguration:
+    """One coherent snapshot of all three operator settings documents."""
+
+    layout: SourceLayout
+    startup: McpStartupConfiguration
+    hicube: HiCubeConfiguration
+    siglent: SiglentConfiguration
+
+    @classmethod
+    def from_toml(cls, layout: SourceLayout | None = None) -> OperatorConfiguration:
+        resolved_layout = SourceLayout.discover() if layout is None else layout
+        startup = McpStartupConfiguration.from_toml(resolved_layout)
+        hicube = HiCubeConfiguration.from_toml(resolved_layout)
+        siglent = SiglentConfiguration.from_toml(resolved_layout, startup)
+        return cls(
+            layout=resolved_layout,
+            startup=startup,
+            hicube=hicube,
+            siglent=siglent,
         )
+
+
+def _read_toml(path: Path, label: str) -> dict[str, object]:
     if not path.is_file():
+        raise ConfigurationError(f"{label} file is missing.")
+    try:
+        with path.open("rb") as settings_file:
+            document = tomllib.load(settings_file)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ConfigurationError(f"{label} file is unreadable or invalid.") from error
+    return cast(dict[str, object], document)
+
+
+def _closed_keys(document: Mapping[str, object], allowed: set[str], label: str) -> None:
+    if set(document) - allowed:
+        raise ConfigurationError(f"{label} contains an unknown setting.")
+
+
+def _schema_version(document: Mapping[str, object], label: str) -> None:
+    value = document.get("schema_version")
+    if type(value) is not int or value != SETTINGS_SCHEMA_VERSION:
         raise ConfigurationError(
-            "DISPENSER_HICUBE_CLIENT_FILE does not identify a readable file."
+            f"{label} schema_version must equal {SETTINGS_SCHEMA_VERSION}."
         )
-    return path.resolve()
 
 
-def _driver_src(raw_value: str | None) -> Path:
-    if raw_value is None or not raw_value.strip():
-        raise ConfigurationError("DISPENSER_SIGLENT_DRIVER_SRC is required.")
-    path = Path(raw_value).expanduser()
-    if not path.is_absolute():
-        raise ConfigurationError("DISPENSER_SIGLENT_DRIVER_SRC must be absolute.")
-    package_file = path / "siglent_spd3000" / "__init__.py"
-    if not package_file.is_file():
-        raise ConfigurationError(
-            "DISPENSER_SIGLENT_DRIVER_SRC must contain siglent_spd3000/__init__.py."
-        )
-    return path.resolve()
-
-
-def _gateway_auth_file(raw_value: str | None) -> Path:
-    if raw_value is None or not raw_value.strip():
-        path = DEFAULT_DEVELOPMENT_GATEWAY_AUTH_FILE
+def _streamable_http_settings(raw_value: object) -> StreamableHttpSettings:
+    if raw_value is None:
+        document: Mapping[str, object] = {}
+    elif isinstance(raw_value, dict):
+        document = cast(dict[str, object], raw_value)
     else:
-        path = Path(raw_value).expanduser()
-    if not path.is_absolute():
-        raise ConfigurationError(
-            "DISPENSER_SIGLENT_GATEWAY_AUTH_FILE must be absolute."
-        )
-    if (
-        path.name
-        not in {
-            "gateway-auth.toml",
-            "py-siglent-spd3000-gateway-auth.toml",
-        }
-        or not path.is_file()
-    ):
-        raise ConfigurationError(
-            "DISPENSER_SIGLENT_GATEWAY_AUTH_FILE must identify a readable "
-            "supported gateway authentication TOML file."
-        )
-    return path.resolve()
+        raise ConfigurationError("streamable_http must be a TOML table.")
+    _closed_keys(
+        document,
+        {
+            "bind_host",
+            "port",
+            "path",
+            "trust_mode",
+            "allowed_hosts",
+            "allowed_origins",
+        },
+        "streamable_http",
+    )
+    return StreamableHttpSettings(
+        bind_host=_text(
+            document.get("bind_host", "127.0.0.1"),
+            name="streamable_http.bind_host",
+            maximum_length=253,
+        ),
+        port=_integer(
+            document.get("port", 8000),
+            name="streamable_http.port",
+            minimum=1024,
+            maximum=65535,
+        ),
+        path=_text(
+            document.get("path", "/mcp"),
+            name="streamable_http.path",
+            maximum_length=256,
+        ),
+        trust_mode=cast(
+            HttpTrustMode,
+            _choice(
+                document.get("trust_mode", "loopback_only"),
+                name="streamable_http.trust_mode",
+                choices=(
+                    "loopback_only",
+                    "authenticated_ssh_tunnel",
+                    "authenticated_reverse_proxy",
+                ),
+            ),
+        ),
+        allowed_hosts=_text_list(
+            document.get("allowed_hosts", []),
+            name="streamable_http.allowed_hosts",
+        ),
+        allowed_origins=_text_list(
+            document.get("allowed_origins", []),
+            name="streamable_http.allowed_origins",
+        ),
+    )
 
 
 def _unloaded_hil_state_file(
-    raw_value: str | None,
+    raw_value: object,
     *,
-    setting_name: str,
     acceptance_context: PowerAcceptanceContext,
 ) -> Path | None:
     if acceptance_context == "production_dispenser":
         if raw_value is not None:
             raise ConfigurationError(
-                f"{setting_name} is only valid for the unloaded_hil acceptance context."
+                "unloaded_hil_state_file is only valid for unloaded_hil."
             )
         return None
-    if raw_value is None or not raw_value.strip():
-        raise ConfigurationError(f"{setting_name} is required for unloaded_hil.")
-    path = Path(raw_value).expanduser()
+    if raw_value is None:
+        raise ConfigurationError(
+            "unloaded_hil_state_file is required for unloaded_hil."
+        )
+    value = _required_text(
+        raw_value, name="unloaded_hil_state_file", maximum_length=1024
+    )
+    path = Path(value).expanduser()
     if not path.is_absolute():
-        raise ConfigurationError(f"{setting_name} must be absolute.")
+        raise ConfigurationError("unloaded_hil_state_file must be absolute.")
     if path.name in {"", ".", ".."} or path.suffix.lower() != ".json":
-        raise ConfigurationError(f"{setting_name} must identify a JSON record file.")
+        raise ConfigurationError(
+            "unloaded_hil_state_file must identify a JSON record file."
+        )
     if not path.parent.is_dir():
         raise ConfigurationError(
-            f"{setting_name} must have an existing parent directory."
+            "unloaded_hil_state_file must have an existing parent directory."
         )
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ConfigurationError(
-            f"{setting_name} must identify a regular non-symlink file."
+            "unloaded_hil_state_file must identify a regular non-symlink file."
         )
     return path.resolve()
 
 
-def _host(raw_value: str | None) -> str:
-    if raw_value is None or not raw_value.strip():
-        raise ConfigurationError("DISPENSER_HICUBE_HOST is required.")
-    host = raw_value.strip()
-    if host != raw_value or len(host) > 253:
-        raise ConfigurationError("DISPENSER_HICUBE_HOST is invalid.")
+def _host(raw_value: object) -> str:
+    host = _required_text(raw_value, name="host", maximum_length=253)
     if "://" in host or "/" in host or "\\" in host or any(c.isspace() for c in host):
-        raise ConfigurationError(
-            "DISPENSER_HICUBE_HOST must be one bare hostname or IP literal."
-        )
+        raise ConfigurationError("host must be one bare hostname or IP literal.")
     if ":" in host:
         try:
             parsed = ipaddress.ip_address(host)
         except ValueError as error:
             raise ConfigurationError(
-                "DISPENSER_HICUBE_HOST may not contain an embedded port."
+                "host may not contain an embedded port."
             ) from error
         if parsed.version != 6:
-            raise ConfigurationError("DISPENSER_HICUBE_HOST is invalid.")
+            raise ConfigurationError("host is invalid.")
     return host
 
 
-def _integer(
-    raw_value: str | None,
-    *,
-    name: str,
-    default: int,
-    minimum: int,
-    maximum: int,
-) -> int:
-    if raw_value is None or not raw_value.strip():
-        return default
-    try:
-        value = int(raw_value)
-    except ValueError as error:
-        raise ConfigurationError(f"{name} must be an integer.") from error
+def _integer(raw_value: object, *, name: str, minimum: int, maximum: int) -> int:
+    if type(raw_value) is not int:
+        raise ConfigurationError(f"{name} must be an integer.")
+    value = raw_value
     if not minimum <= value <= maximum:
         raise ConfigurationError(f"{name} must be between {minimum} and {maximum}.")
     return value
 
 
-def _number(
-    raw_value: str | None,
-    *,
-    name: str,
-    default: float,
-    minimum: float,
-    maximum: float,
-) -> float:
-    if raw_value is None or not raw_value.strip():
-        return default
-    try:
-        value = float(raw_value)
-    except ValueError as error:
-        raise ConfigurationError(f"{name} must be numeric.") from error
-    if not minimum <= value <= maximum:
+def _number(raw_value: object, *, name: str, minimum: float, maximum: float) -> float:
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        if _is_placeholder(raw_value):
+            raise ConfigurationError(f"{name} still contains a placeholder.")
+        raise ConfigurationError(f"{name} must be a TOML number.")
+    value = float(raw_value)
+    if not math.isfinite(value) or not minimum <= value <= maximum:
         raise ConfigurationError(f"{name} must be between {minimum} and {maximum}.")
     return value
 
 
 def _required_number(
-    raw_value: str | None,
-    *,
-    name: str,
-    minimum: float,
-    maximum: float,
-    exclusive_minimum: bool = False,
+    raw_value: object, *, name: str, minimum: float, maximum: float
 ) -> float:
-    if raw_value is None or not raw_value.strip():
+    if raw_value is None:
         raise ConfigurationError(f"{name} is required.")
-    try:
-        value = float(raw_value)
-    except ValueError as error:
-        raise ConfigurationError(f"{name} must be numeric.") from error
-    lower_ok = value > minimum if exclusive_minimum else value >= minimum
-    if not math.isfinite(value) or not lower_ok or value > maximum:
-        comparator = "greater than" if exclusive_minimum else "at least"
-        raise ConfigurationError(
-            f"{name} must be finite, {comparator} {minimum}, and at most {maximum}."
-        )
-    return value
+    return _number(raw_value, name=name, minimum=minimum, maximum=maximum)
 
 
-def _required_text(raw_value: str | None, *, name: str, maximum_length: int) -> str:
-    if raw_value is None or not raw_value:
-        raise ConfigurationError(f"{name} is required.")
-    if raw_value != raw_value.strip() or len(raw_value) > maximum_length:
+def _text(raw_value: object, *, name: str, maximum_length: int) -> str:
+    if not isinstance(raw_value, str):
+        raise ConfigurationError(f"{name} must be a string.")
+    if (
+        not raw_value
+        or raw_value != raw_value.strip()
+        or len(raw_value) > maximum_length
+        or any(ord(character) < 32 for character in raw_value)
+    ):
         raise ConfigurationError(f"{name} is invalid.")
-    if any(ord(character) < 32 for character in raw_value):
-        raise ConfigurationError(f"{name} contains a control character.")
     return raw_value
 
 
-def _choice(raw_value: str | None, *, name: str, choices: tuple[str, ...]) -> str:
+def _required_text(raw_value: object, *, name: str, maximum_length: int) -> str:
+    if raw_value is None:
+        raise ConfigurationError(f"{name} is required.")
+    value = _text(raw_value, name=name, maximum_length=maximum_length)
+    if _is_placeholder(value):
+        raise ConfigurationError(f"{name} still contains a placeholder.")
+    return value
+
+
+def _is_placeholder(value: object) -> bool:
+    return isinstance(value, str) and "replace-with-" in value.lower()
+
+
+def _choice(raw_value: object, *, name: str, choices: tuple[str, ...]) -> str:
     value = _required_text(raw_value, name=name, maximum_length=64)
     if value not in choices:
         rendered = ", ".join(choices)
@@ -453,13 +548,20 @@ def _choice(raw_value: str | None, *, name: str, choices: tuple[str, ...]) -> st
     return value
 
 
-def _required_boolean(raw_value: str | None, *, name: str) -> bool:
-    value = _required_text(raw_value, name=name, maximum_length=5).lower()
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-    raise ConfigurationError(f"{name} must be explicitly true or false.")
+def _boolean(raw_value: object, *, name: str) -> bool:
+    if type(raw_value) is not bool:
+        raise ConfigurationError(f"{name} must be a TOML boolean.")
+    return raw_value
+
+
+def _text_list(raw_value: object, *, name: str) -> tuple[str, ...]:
+    if not isinstance(raw_value, list):
+        raise ConfigurationError(f"{name} must be a TOML array of strings.")
+    raw_values = cast(list[object], raw_value)
+    values = tuple(_text(value, name=name, maximum_length=512) for value in raw_values)
+    if len(set(values)) != len(values):
+        raise ConfigurationError(f"{name} contains a duplicate value.")
+    return values
 
 
 def _require_resolution(value: float, *, resolution: float, name: str) -> None:
@@ -467,5 +569,5 @@ def _require_resolution(value: float, *, resolution: float, name: str) -> None:
     decimal_resolution = Decimal(str(resolution))
     if decimal_value % decimal_resolution != 0:
         raise ConfigurationError(
-            f"{name} must align to the expected model resolution {resolution}."
+            f"{name} must align to the fixed model resolution {resolution}."
         )
