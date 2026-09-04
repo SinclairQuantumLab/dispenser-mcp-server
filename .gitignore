@@ -1,0 +1,14 @@
+.venv/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+__pycache__/
+*.py[cod]
+dist/
+build/
+*.egg-info/
+.env
+gateway-auth.toml
+**/gateway-auth.toml
+/settings/py-siglent-spd3000-gateway-auth.toml
+/py-siglent-spd3000/

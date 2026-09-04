@@ -1,0 +1,10 @@
+{
+  "archive_name": "uv-aarch64-unknown-linux-gnu.tar.gz",
+  "archive_sha256": "f2ee1cde9aabb4c6e43bd3f341dadaf42189a54e001e521346dc31547310e284",
+  "archive_size_bytes": 22739428,
+  "extracted_uv_sha256": "7e4b13d1dc30193acd1195e0263de5b9c2a5f9f7f685f6100876faff8b4ff60d",
+  "release_commit": "9d177269e110f40d578804e1b3d4ca3183a4ef6c",
+  "schema_version": 1,
+  "target": "aarch64-unknown-linux-gnu",
+  "version": "0.11.7"
+}

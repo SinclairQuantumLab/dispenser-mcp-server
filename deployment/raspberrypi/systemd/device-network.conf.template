@@ -1,0 +1,5 @@
+[Service]
+# Copy separately under each unit's .d directory and replace both values with
+# exact reviewed IPv4 /32 addresses. Hostnames, ranges, and placeholders fail.
+IPAddressAllow=replace-with-hicube-ip/32
+IPAddressAllow=replace-with-siglent-gateway-ip/32

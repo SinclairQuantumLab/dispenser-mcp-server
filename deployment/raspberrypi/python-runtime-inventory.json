@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "platform": "linux",
+  "machine": "aarch64",
+  "python_major": 3,
+  "python_minor": 13,
+  "distributions": [
+    {
+      "name": "aiosqlite",
+      "version": "0.22.1"
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0"
+    },
+    {
+      "name": "anyio",
+      "version": "4.15.0"
+    },
+    {
+      "name": "asyncua",
+      "version": "2.0.1"
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0"
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1"
+    },
+    {
+      "name": "click",
+      "version": "8.5.0"
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.1"
+    },
+    {
+      "name": "dispenser-conditioning-mcp",
+      "version": "0.5.1"
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0"
+    },
+    {
+      "name": "httpcore2",
+      "version": "2.12.0"
+    },
+    {
+      "name": "httpx2",
+      "version": "2.12.0"
+    },
+    {
+      "name": "idna",
+      "version": "3.19"
+    },
+    {
+      "name": "jsonschema",
+      "version": "4.26.0"
+    },
+    {
+      "name": "jsonschema-specifications",
+      "version": "2025.9.1"
+    },
+    {
+      "name": "mcp",
+      "version": "2.1.1"
+    },
+    {
+      "name": "mcp-types",
+      "version": "2.1.1"
+    },
+    {
+      "name": "opentelemetry-api",
+      "version": "1.44.0"
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0"
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.5"
+    },
+    {
+      "name": "pydantic-core",
+      "version": "2.46.5"
+    },
+    {
+      "name": "pyjwt",
+      "version": "2.13.0"
+    },
+    {
+      "name": "pyopenssl",
+      "version": "26.4.0"
+    },
+    {
+      "name": "python-dateutil",
+      "version": "2.9.0.post0"
+    },
+    {
+      "name": "python-multipart",
+      "version": "0.0.32"
+    },
+    {
+      "name": "pytz",
+      "version": "2026.3.post1"
+    },
+    {
+      "name": "referencing",
+      "version": "0.37.0"
+    },
+    {
+      "name": "rpds-py",
+      "version": "2026.6.3"
+    },
+    {
+      "name": "six",
+      "version": "1.17.0"
+    },
+    {
+      "name": "sortedcontainers",
+      "version": "2.4.0"
+    },
+    {
+      "name": "sse-starlette",
+      "version": "3.4.8"
+    },
+    {
+      "name": "starlette",
+      "version": "1.6.0"
+    },
+    {
+      "name": "truststore",
+      "version": "0.10.4"
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0"
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.4"
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.52.4"
+    }
+  ],
+  "description": "Exact CPython 3.13 aarch64 Linux runtime for dispenser-conditioning-mcp 0.5.1."
+}
+

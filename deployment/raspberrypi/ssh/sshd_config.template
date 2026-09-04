@@ -1,0 +1,28 @@
+# Install as /etc/ssh/sshd_config.d/70-dispenser-conditioning-mcp.conf.
+Match User mcp-bridge-hil
+    AuthorizedKeysFile /etc/dispenser-conditioning-mcp/ssh/mcp-bridge-hil
+    AuthenticationMethods publickey
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    AllowTcpForwarding local
+    PermitOpen 127.0.0.1:8001
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    PermitTunnel no
+    GatewayPorts no
+    MaxSessions 0
+
+Match User mcp-bridge-prod
+    AuthorizedKeysFile /etc/dispenser-conditioning-mcp/ssh/mcp-bridge-prod
+    AuthenticationMethods publickey
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    AllowTcpForwarding local
+    PermitOpen 127.0.0.1:8002
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    PermitTunnel no
+    GatewayPorts no
+    MaxSessions 0

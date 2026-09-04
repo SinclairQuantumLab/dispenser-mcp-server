@@ -1,0 +1,46 @@
+[Unit]
+Description=Dispenser Conditioning MCP production dispenser
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dispenser-prod
+Group=dispenser-prod
+EnvironmentFile=/etc/dispenser-conditioning-mcp/production/profile.env
+ExecStartPre=/usr/bin/python3.13 -I -B /opt/dispenser-conditioning-mcp/app/verify_runtime_start.py
+ExecStartPre=/opt/dispenser-conditioning-mcp/venv/bin/python -I -B -m dispenser_conditioning_mcp.deployment_inventory /opt/dispenser-conditioning-mcp/app/python-runtime-inventory.json
+ExecStartPre=/opt/dispenser-conditioning-mcp/venv/bin/python -I -B -m dispenser_conditioning_mcp.deployment_check
+ExecStart=/opt/dispenser-conditioning-mcp/venv/bin/python -I -B -m dispenser_conditioning_mcp
+Restart=no
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dispenser-conditioning-mcp-production
+
+# Intentionally no [Install] section: commissioning must not boot-enable this
+# control-capable process. An operator starts it manually after physical review.
