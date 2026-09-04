@@ -17,8 +17,7 @@ See the exact [pressure contract](docs/pressure-observation-contract.md),
 
 ## Quick start from source
 
-This Python repository runs on any supported host with Git, `uv`, and CPython
-3.13. The clone, submodule, and `uv` steps are platform-independent. First
+This Python repository runs on any supported host with Git and `uv`. First
 commissioning is read-only: keep control disabled, and never commit `.env` or
 the populated gateway-authentication file. Control-enabled commissioning is
 currently blocked pending completion of the durable-HIL crash-consistency
@@ -27,30 +26,26 @@ review.
 ```sh
 git clone --recurse-submodules https://github.com/SinclairQuantumLab/dispenser-mcp-server.git
 cd dispenser-mcp-server
-git submodule status
-git -C dependencies/py-siglent-spd3000 rev-parse HEAD
-uv python install 3.13
-uv sync --locked --all-groups
+uv sync
 ```
 
-The submodule status must begin with a space, not `-` or `+`, and the reported
-commit must be `0984bba67d8e5651cd2d9aa7b2c0db2d6eb694f3`. If `uv` is missing,
-follow its [official platform installation instructions](https://docs.astral.sh/uv/getting-started/installation/),
-then open a fresh shell or add the installed binary directory to `PATH`.
+The recursive clone checks out the pinned `py-siglent-spd3000` source, and
+`uv sync` uses `.python-version`, `uv.lock`, and the editable local dependency
+declared in `pyproject.toml`. If `uv` is missing, follow its
+[official installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
 
-On a POSIX shell, create the two untracked local files with owner-only modes:
+Create the two untracked local configuration files:
 
 ```sh
 cp .env.example .env
-chmod 600 .env
 cp settings/py-siglent-spd3000-gateway-auth.toml.template \
   settings/py-siglent-spd3000-gateway-auth.toml
-chmod 600 settings/py-siglent-spd3000-gateway-auth.toml
 ```
 
-On PowerShell, use `Copy-Item` for the same two copies and apply a local
-user-only ACL instead of `chmod`. Edit the files as the operator. Remove or
-comment the optional Windows example lines for `DISPENSER_HICUBE_CLIENT_FILE` and
+On PowerShell, use `Copy-Item` for the same two copies. Restrict both populated
+files to the service account before a persistent deployment. Edit the files as
+the operator. Remove or comment the optional Windows example lines for
+`DISPENSER_HICUBE_CLIENT_FILE` and
 `DISPENSER_SIGLENT_GATEWAY_AUTH_FILE` to use the repository defaults. Set
 `DISPENSER_SIGLENT_DRIVER_SRC` to the absolute
 `dependencies/py-siglent-spd3000/src` path; fill the endpoint, model, serial,
@@ -61,8 +56,8 @@ the first start.
 Validate and start with the same commands on every supported host:
 
 ```sh
-uv run --locked --env-file .env python -m dispenser_conditioning_mcp.deployment_check
-uv run --locked --env-file .env dispenser-conditioning-mcp
+uv run --env-file .env python -m dispenser_conditioning_mcp.deployment_check
+uv run --env-file .env dispenser-conditioning-mcp
 ```
 
 During first commissioning, call only `read_vacuum_pressure` and
