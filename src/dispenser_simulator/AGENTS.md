@@ -4,8 +4,11 @@ This is the single runtime source, shipped inside the independently cloneable MC
 checkout. The sibling simulator project keeps developer tests, docs and a package
 bootstrap only. Do not create a second physics implementation or parent-tree
 runtime dependency. The simulator specialist retains ownership of model, clock,
-contract and scenario behavior; coordinate through root and keep the decision
-specialist isolated from hidden simulator configuration and internal state.
+contract and scenario behavior. Normal development allows direct collaboration
+with root and the decision specialist. Distinguish measured/vendor facts, model
+assumptions and synthetic predictions. Restrict hidden scenarios and truth only
+when an evaluation is explicitly designated blind. Do not change the deployed
+physics or declared access scope of an ongoing run while preparing a new revision.
 Backend selection/HTTP integration belong to the MCP engineer. Relocation alone
 does not authorize changing dynamics, bounds, interlocks or scientific semantics.
 No-load stop state is process-local. Do not add startup inspection/reset gates or
