@@ -1,4 +1,45 @@
 "use strict";
+// Numeric coordinates remain minutes; only displayed elapsed labels change.
+function elapsedLabel(minutes, hours = minutes >= 60, showSeconds = false, fractional = false) {
+  const rawSeconds = Math.max(0, Number((minutes * 60).toFixed(3)));
+  const seconds = fractional ? Math.floor(rawSeconds) : Math.round(rawSeconds);
+  const fraction = fractional ? (rawSeconds - seconds).toFixed(3).slice(1) : "";
+  const pad = value => String(value).padStart(2, "0");
+  return hours ? pad(Math.floor(seconds / 3600)) + ":" + pad(Math.floor(seconds / 60) % 60) + (showSeconds ? ":" + pad(seconds % 60) + fraction : "")
+    : pad(Math.floor(seconds / 60)) + ":" + pad(seconds % 60) + fraction;
+}
+function elapsedDetail(minutes) {
+  return "Elapsed " + elapsedLabel(minutes, minutes >= 60, true) + (minutes >= 60 ? " HH:MM:SS" : " MM:SS") + " · " + (minutes * 60).toFixed(3) + " s";
+}
+function elapsedAxis(values, range) {
+  const finite = values.filter(v => typeof v === "number" && Number.isFinite(v));
+  let low = finite.length ? finite.reduce((a,b)=>Math.min(a,b)) : 0, high = finite.length ? finite.reduce((a,b)=>Math.max(a,b)) : 1;
+  if (range && range.length === 2 && range.every(v => Number.isFinite(Number(v)))) [low, high] = range.map(Number);
+  if (high <= low) high = low + 1 / 60;
+  const hours = high >= 60;
+  const showSeconds = hours && (high - low) / 6 < 1;
+  const fractional = (high - low) * 60 / 6 < 1;
+  const tickvals = Array.from({length:7}, (_, i) => low + (high - low) * i / 6);
+  return {tickmode:"array", tickvals, ticktext:tickvals.map(v => elapsedLabel(v, hours, showSeconds, fractional)),
+    title:{text:"Virtual elapsed · " + (hours ? (showSeconds ? (fractional ? "HH:MM:SS.sss" : "HH:MM:SS") : "HH:MM") + " (hours may exceed 24)" : (fractional ? "MM:SS.sss" : "MM:SS"))}};
+}
+function watchElapsedZoom(id, values, count) {
+  const graph = el(id);
+  graph.removeAllListeners("plotly_relayout");
+  graph.on("plotly_relayout", change => {
+    if (!Object.keys(change).some(k => /^xaxis[0-9]*\.(range|autorange)/.test(k))) return;
+    if (id === "chart" && !rendering && Object.keys(change).some(k=>k.includes("range["))) el("follow").checked = false;
+    if (id === "chart" && el("clock").value !== "virtual") return;
+    const ticks = elapsedAxis(values, graph.layout.xaxis.autorange ? null : graph.layout.xaxis.range);
+    const update = {};
+    for (let i=1;i<=count;i++) {
+      const axis = i === 1 ? "xaxis" : "xaxis"+i;
+      update[axis+".tickmode"] = ticks.tickmode; update[axis+".tickvals"] = ticks.tickvals; update[axis+".ticktext"] = ticks.ticktext;
+      if (i === count) update[axis+".title"] = ticks.title;
+    }
+    Plotly.relayout(graph, update);
+  });
+}
 const el = id => document.getElementById(id);
 const selectedRun = new URLSearchParams(window.location.search).get("run") || "";
 const runQuery = "run=" + encodeURIComponent(selectedRun);
@@ -136,7 +177,7 @@ async function draw() {
       xaxis: panel === 1 ? "x" : `x${panel}`, yaxis: panel === 1 ? "y" : `y${panel}`,
       line: { color, width: 2, dash, shape: field.includes("setpoint") || field.includes("limit") ? "hv" : "linear" },
       marker: { size: 4 }, connectgaps: false, customdata: rows.map(r => r.event_id),
-      text: rows.map(r => shortId(r.event_id)), hovertemplate: "%{text}<br>%{x}<br>%{y}<extra>" + name + "</extra>" };
+      text: rows.map(r => shortId(r.event_id) + "<br>" + (axis === "virtual" ? elapsedDetail(xFor(r)) : xFor(r))), hovertemplate: "%{text}<br>%{y}<extra>" + name + "</extra>" };
   }
   const traces = [
     trace("pressure_mbar", "Observed total pressure · mbar", "#e1c77c", 1, r => r.observation_kind === "pressure"),
@@ -151,7 +192,9 @@ async function draw() {
     const rows = controls.filter(r => (status === "not_executed" ? outcome(byId.get(r.event_id)) === "Not executed" : r.status === status && outcome(byId.get(r.event_id)) !== "Not executed") && xFor(r) !== null);
     traces.push({ type: "scatter", mode: "markers", name: label, x: rows.map(xFor), y: rows.map(() => y), xaxis: "x4", yaxis: "y4", marker: { color, symbol, size: 10 }, customdata: rows.map(r => r.event_id), text: rows.map(r => `${shortId(r.event_id)} · ${toolLabel(r.tool)}<br>${outcome(byId.get(r.event_id))}<br>${r.error || ""}${el("clock").value === "virtual" && !r.observed_at ? "<br>Position: agent-declared decision time (not an observation)" : ""}`), hovertemplate: "%{text}<extra></extra>" });
   }
-  const axisBase = { type: axis === "wall" ? "date" : "linear", gridcolor: "#304254", zeroline: false, title: { text: axis === "wall" ? "Recorded wall time · UTC" : "Virtual elapsed minutes" }, automargin: true };
+  const elapsedValues = traces.flatMap(t => t.x);
+  const elapsedTicks = elapsedAxis(elapsedValues, el("chart").layout?.xaxis?.autorange ? null : el("chart").layout?.xaxis?.range);
+  const axisBase = { ...(axis === "virtual" ? elapsedTicks : {}), type: axis === "wall" ? "date" : "linear", gridcolor: "#304254", zeroline: false, title: { text: axis === "wall" ? "Recorded wall time · UTC" : elapsedTicks.title.text }, automargin: true };
   const layout = { paper_bgcolor: "#152330", plot_bgcolor: "#152330", font: { color: "#c9d8e5", size: 11 }, margin: { t: 60, r: 30, b: 45, l: 95 }, height: 800, hovermode: "closest", dragmode: "zoom", uirevision: `${metadata.session_id}:${generation}:${axis}`, legend: { orientation: "h", x: 0, y: 1.1, font: { size: 10 } },
     xaxis: { ...axisBase, anchor: "y", showticklabels: false, title: null },
     xaxis2: { ...axisBase, anchor: "y2", matches: "x", showticklabels: false, title: null },
@@ -166,8 +209,8 @@ async function draw() {
   await Plotly.react("chart", traces, layout, { responsive: true, displaylogo: false, scrollZoom: true });
   if (!chartReady) {
     el("chart").on("plotly_click", data => { const id = data.points[0]?.customdata; if (id) selectEvent(id); });
-    el("chart").on("plotly_relayout", changes => { if (!rendering && Object.keys(changes).some(key => key.includes("range["))) el("follow").checked = false; });
   }
+  watchElapsedZoom("chart", elapsedValues, 4);
   chartReady = true; rendering = false;
 }
 
@@ -228,8 +271,8 @@ async function pollTruth() {
     const series = (field,name,color,panel,scale=1) => ({type:"scatter",mode:"lines",name,
       x:rows.map(r=>r.virtual_time_s/60),y:rows.map(r=>num(r.state[field]) === null ? null : r.state[field]*scale),
       xaxis:panel === 1 ? "x" : "x"+panel,yaxis:panel === 1 ? "y" : "y"+panel,
-      line:{color,width:2},connectgaps:false,customdata:rows.map(r=>r.sequence),text:rows.map(r=>"Model snapshot S"+r.sequence),
-      hovertemplate:"%{text}<br>%{x:.3f} virtual min<br>%{y}<extra>"+name+"</extra>"});
+      line:{color,width:2},connectgaps:false,customdata:rows.map(r=>r.sequence),text:rows.map(r=>"Model snapshot S"+r.sequence+"<br>"+elapsedDetail(r.virtual_time_s/60)),
+      hovertemplate:"%{text}<br>%{y}<extra>"+name+"</extra>"});
     const traces = [
       series("rb_remaining_fraction","Rb remaining · %","#e5bc75",1,100),
       series("impurity_remaining_fraction","Impurity remaining · %","#80d8d0",1,100),
@@ -240,22 +283,24 @@ async function pollTruth() {
       series("impurity_pressure_mbar","Impurity model pressure · mbar","#80d8d0",3),
       series("background_pressure_mbar","Background model pressure · mbar","#91a9ca",3)
     ];
+    const truthTicks = elapsedAxis(rows.map(r=>r.virtual_time_s/60), el("truth-chart").layout?.xaxis?.autorange ? null : el("truth-chart").layout?.xaxis?.range);
     const base={gridcolor:"#304254",automargin:true};
     await Plotly.react("truth-chart",traces,{paper_bgcolor:"#152330",plot_bgcolor:"#152330",font:{color:"#c9d8e5"},height:640,
       margin:{t:90,b:50,l:95,r:25},uirevision:metadata.session_id+":"+data.run_id,
       legend:{orientation:"h",y:1.18,font:{size:10}},
-      xaxis:{...base,anchor:"y",showticklabels:false},
-      xaxis2:{...base,anchor:"y2",matches:"x",showticklabels:false},
-      xaxis3:{...base,anchor:"y3",matches:"x",title:{text:"Virtual elapsed minutes · model snapshots"}},
+      xaxis:{...base,...truthTicks,title:null,anchor:"y",showticklabels:false},
+      xaxis2:{...base,...truthTicks,title:null,anchor:"y2",matches:"x",showticklabels:false},
+      xaxis3:{...base,...truthTicks,anchor:"y3",matches:"x",title:truthTicks.title},
       yaxis:{...base,domain:[.72,1],range:[0,100],title:{text:"Remaining · %"}},
       yaxis2:{...base,domain:[.38,.64],rangemode:"tozero",title:{text:"Release · units/s"}},
       yaxis3:{...base,domain:[0,.29],type:"log",tickformat:".3e",title:{text:"Model pressure · mbar"}}
     },{responsive:true,displaylogo:false});
+    watchElapsedZoom("truth-chart", rows.map(r=>r.virtual_time_s/60), 3);
     el("truth-chart").removeAllListeners("plotly_click");
     el("truth-chart").on("plotly_click", clicked => {
       const row = truthRows.find(r => r.sequence === clicked.points[0]?.customdata);
       if (!row) return;
-      el("truth-selected").textContent = "Model snapshot S" + row.sequence + " · " + fmt(row.virtual_time_s / 60) + " virtual minutes · Rb remaining " + fmt(num(row.state.rb_remaining_fraction) === null ? null : row.state.rb_remaining_fraction * 100) + "% · Impurity remaining " + fmt(num(row.state.impurity_remaining_fraction) === null ? null : row.state.impurity_remaining_fraction * 100) + "%. Model state only; not a supporting observation.";
+      el("truth-selected").textContent = "Model snapshot S" + row.sequence + " · " + elapsedDetail(row.virtual_time_s / 60) + " · Rb remaining " + fmt(num(row.state.rb_remaining_fraction) === null ? null : row.state.rb_remaining_fraction * 100) + "% · Impurity remaining " + fmt(num(row.state.impurity_remaining_fraction) === null ? null : row.state.impurity_remaining_fraction * 100) + "%. Model state only; not a supporting observation.";
       el("truth-raw").textContent = JSON.stringify(row,null,2);
       el("truth-selected").classList.add("highlight");
       el("truth-selected").scrollIntoView({behavior:"smooth",block:"center"});

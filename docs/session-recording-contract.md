@@ -234,7 +234,13 @@ seven-tool RecordingAdapter: no proxy port, duplicate recorder or second IDs.
 control_enabled (default true) and compliance_voltage_v (default1.0 V, synthetic
 test setting only). No hidden scenario/seed is returned by MCP. Hardware backend is the
 default and retains its required identity/configuration/credential behavior.
-The model's original dynamics/clock and standalone stdio defaults are unchanged.
+The model's equations and standalone voltage default are unchanged. Simulation
+physical tools accept optional elapsed_s (0..86400 seconds, except shutdown).
+Actual advance is max(requested, monotonic wall elapsed); first-call wall time
+is zero. Results carry timing; domain errors after progress carry
+_meta.simulation_timing. Existing JSONL retains these values without invented
+intermediate instrument samples. Pure declarations/dashboard views do not reset
+the physical clock. Hardware tool timing/arguments are unchanged.
 
 Pilot session metadata/events and simulator observer snapshots do not emit a
 schema_version tag. Readers keep content and session/run association checks.

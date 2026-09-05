@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from .metadata import NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
 from .observer import Observer
@@ -88,8 +89,6 @@ class HiddenSimulatorConfig:
     compliance_voltage_v: float = 10.0
     max_load_current_a: float = 4.8
     upward_step_a: float = 0.2
-    read_tick_s: float = 15.0
-    action_tick_s: float = 1.0
     observer_file: str | None = None
 
     def __post_init__(self) -> None:
@@ -105,8 +104,6 @@ class HiddenSimulatorConfig:
             raise ValueError("Maximum load-current limit must be in (0, 4.8]")
         if not math.isclose(self.upward_step_a, 0.2, abs_tol=EPSILON):
             raise ValueError("parallel_ch1 upward step must be exactly 0.2 A")
-        if self.read_tick_s <= 0.0 or self.action_tick_s <= 0.0:
-            raise ValueError("Virtual time increments must be positive")
 
 
 @dataclass
@@ -135,15 +132,20 @@ class _State:
 
 
 class SimulatedDispenser:
-    """Deterministic dynamic simulator backing the six public MCP tools."""
+    """Dynamic simulator, deterministic for fixed inputs and an injected clock."""
 
     _epoch = datetime(2040, 1, 1, tzinfo=UTC)
 
     def __init__(
         self,
         config: HiddenSimulatorConfig,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
     ):
         self.config = config
+        self._monotonic = monotonic
+        self._last_interaction: float | None = None
+        self.timing: dict[str, float] = {}
         self.params = SCENARIOS[config.scenario]
         self.state = _State(pressure_state_mbar=self.params.base_pressure_mbar)
         self.resistance_ohm = self.params.load_resistance_ohm * (
@@ -523,8 +525,45 @@ class SimulatedDispenser:
             }
         )
 
-    def _call_tick(self, *, read: bool) -> None:
-        self.advance(self.config.read_tick_s if read else self.config.action_tick_s)
+    @staticmethod
+    def validate_elapsed(value: object) -> float:
+        if type(value) not in (int, float):
+            raise SimulationError(
+                "elapsed_s must be a finite JSON number from 0 through 86400 seconds."
+            )
+        numeric = cast(int | float, value)
+        if not 0 <= numeric <= 86400 or not math.isfinite(numeric):
+            raise SimulationError(
+                "elapsed_s must be a finite JSON number from 0 through 86400 seconds."
+            )
+        return float(numeric)
+
+    def _call_tick(self, elapsed_s: float = 0.0) -> None:
+        """Catch up under the preceding output state before observing or acting.
+
+        Only physical interactions establish the monotonic anchor. Integration
+        and recording duration therefore count toward the next interaction.
+        """
+        requested = self.validate_elapsed(elapsed_s)
+        now = self._monotonic()
+        wall = (
+            max(0.0, now - self._last_interaction)
+            if self._last_interaction is not None
+            else 0.0
+        )
+        self._last_interaction = now
+        advanced = max(requested, wall)
+        remaining = advanced
+        while remaining > 0:
+            chunk = min(remaining, 3600.0)
+            self.advance(chunk)
+            remaining -= chunk
+        self.timing = {
+            "requested_elapsed_s": requested,
+            "wall_elapsed_s": wall,
+            "advanced_s": advanced,
+            "virtual_time_s": self.state.virtual_time_s,
+        }
 
     def _power_result(
         self,
@@ -557,6 +596,7 @@ class SimulatedDispenser:
             )
         result: dict[str, Any] = {
             "observed_at": self._timestamp(),
+            "timing": dict(self.timing),
             "source": "synthetic.dispenser_conditioning.power_supply",
             "simulated": True,
             "synthetic_provenance": "seeded_dynamic_model_not_hardware_evidence",
@@ -626,13 +666,13 @@ class SimulatedDispenser:
             result["simulator_state_mutated"] = simulator_state_mutated
         return result
 
-    def read_dispenser_power_state(self) -> dict[str, Any]:
-        self._call_tick(read=True)
+    def read_dispenser_power_state(self, *, elapsed_s: float = 0.0) -> dict[str, Any]:
+        self._call_tick(elapsed_s)
         self._record("read", "synthetic power state sampled")
         return self._power_result()
 
-    def prepare_dispenser_power(self) -> dict[str, Any]:
-        self._call_tick(read=False)
+    def prepare_dispenser_power(self, *, elapsed_s: float = 0.0) -> dict[str, Any]:
+        self._call_tick(elapsed_s)
         self._assert_control_ready()
         self.state.ch1_output_on = False
         self.state.ch2_output_on = False
@@ -644,8 +684,10 @@ class SimulatedDispenser:
         self._complete_mutating_call("prepare_dispenser_power")
         return self._power_result(wrote_hardware=False, simulator_state_mutated=True)
 
-    def enable_dispenser_output(self, confirmation: str) -> dict[str, Any]:
-        self._call_tick(read=False)
+    def enable_dispenser_output(
+        self, confirmation: str, *, elapsed_s: float = 0.0
+    ) -> dict[str, Any]:
+        self._call_tick(elapsed_s)
         self._assert_control_ready()
         if confirmation != self.confirmation_literal:
             raise SimulationError(
@@ -685,9 +727,13 @@ class SimulatedDispenser:
         return self._power_result(wrote_hardware=False, simulator_state_mutated=True)
 
     def set_dispenser_current(
-        self, target_current_a: float, expected_current_a: float
+        self,
+        target_current_a: float,
+        expected_current_a: float,
+        *,
+        elapsed_s: float = 0.0,
     ) -> dict[str, Any]:
-        self._call_tick(read=False)
+        self._call_tick(elapsed_s)
         self._assert_control_ready()
         for label, value in (
             ("target_current_a", target_current_a),
@@ -742,7 +788,7 @@ class SimulatedDispenser:
         return self._power_result(wrote_hardware=False, simulator_state_mutated=True)
 
     def shutdown_dispenser_power(self) -> dict[str, Any]:
-        self._call_tick(read=False)
+        self._call_tick()
         self._assert_control_ready(require_topology=False, allow_latched=True)
         self.state.ch1_output_on = False
         self.state.ch2_output_on = False
@@ -753,8 +799,8 @@ class SimulatedDispenser:
         self._complete_mutating_call("shutdown_dispenser_power")
         return self._power_result(wrote_hardware=False, simulator_state_mutated=True)
 
-    def read_vacuum_pressure(self) -> dict[str, Any]:
-        self._call_tick(read=True)
+    def read_vacuum_pressure(self, *, elapsed_s: float = 0.0) -> dict[str, Any]:
+        self._call_tick(elapsed_s)
         self.state.pressure_reads += 1
         if (
             self.config.scenario == "gauge_dropout"
@@ -775,6 +821,7 @@ class SimulatedDispenser:
         self._record("read", "synthetic G1 total-pressure sample")
         return {
             "observed_at": self._timestamp(),
+            "timing": dict(self.timing),
             "pressure_mbar": pressure,
             "pressure_torr": pressure * MBAR_TO_TORR,
             "source": "synthetic.pfeiffer_hicube_neo.pvviewer.g1_total_pressure",
@@ -835,28 +882,31 @@ class ToolRouter:
         self, name: str, arguments: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
         args = self._object(arguments)
+        elapsed = 0.0
+        if name in self.TOOL_NAMES and name != "shutdown_dispenser_power":
+            elapsed = self.simulator.validate_elapsed(args.pop("elapsed_s", 0.0))
         if name == "read_dispenser_power_state":
             self._exact_keys(args, set())
-            return self.simulator.read_dispenser_power_state()
+            return self.simulator.read_dispenser_power_state(elapsed_s=elapsed)
         if name == "prepare_dispenser_power":
             self._exact_keys(args, set())
-            return self.simulator.prepare_dispenser_power()
+            return self.simulator.prepare_dispenser_power(elapsed_s=elapsed)
         if name == "enable_dispenser_output":
             field = self.simulator.confirmation_field
             self._exact_keys(args, {field})
             value = args[field]
             if not isinstance(value, str):
                 raise SimulationError("Enable confirmation must be a string.")
-            return self.simulator.enable_dispenser_output(value)
+            return self.simulator.enable_dispenser_output(value, elapsed_s=elapsed)
         if name == "set_dispenser_current":
             self._exact_keys(args, {"target_current_a", "expected_current_a"})
             return self.simulator.set_dispenser_current(
-                args["target_current_a"], args["expected_current_a"]
+                args["target_current_a"], args["expected_current_a"], elapsed_s=elapsed
             )
         if name == "shutdown_dispenser_power":
             self._exact_keys(args, set())
             return self.simulator.shutdown_dispenser_power()
         if name == "read_vacuum_pressure":
             self._exact_keys(args, set())
-            return self.simulator.read_vacuum_pressure()
+            return self.simulator.read_vacuum_pressure(elapsed_s=elapsed)
         raise SimulationError("Unknown tool name.")

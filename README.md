@@ -129,8 +129,20 @@ loopback, authenticated dashboard and terminal inaccessible to the remote agent.
 New HTTP simulation defaults are synthetic `production_dispenser`,
 `control_enabled = true`, `compliance_voltage_v = 1.0` V. The voltage is a
 simulation-only test value, **not approved for live equipment**. Existing model
-limits/timing remain 4.8 A load ceiling, 0.2 A upward steps, 15 s read and 1 s action
-virtual increments; requests alone advance model time. No physics is changed.
+limits remain 4.8 A load ceiling and 0.2 A upward steps. Simulation reads and
+prepare/enable/set accept optional `elapsed_s` (0..86400 seconds, default 0).
+Each physical interaction irreversibly advances by the greater of that request
+and actual monotonic wall time since the previous interaction. The first call
+ignores pre-client server idle. Controls evolve the old output state before
+applying the new action. Shutdown has no future-delay argument. Decisions and
+dashboard views do not advance/reset the clock; their wall time counts at the
+next physical interaction. Results include `timing` (requested, wall, actual and
+cumulative virtual seconds); domain errors after advancement carry
+`_meta.simulation_timing`. Invalid interval/context does not advance the model.
+No intermediate gauge samples are invented, and physics equations are unchanged.
+The dashboard formats elapsed axes as MM:SS below one hour or HH:MM for longer
+runs (hours do not wrap), adding seconds or milliseconds when zoomed closely.
+Hover retains precise elapsed seconds. CSV units stay unchanged.
 The old developer stdio command retains its original 10.0 V default and explicit
 environment overrides. HTTP simulation does not import hardware adapters or read
 their settings/authentication. Installed dependency code is not device access.

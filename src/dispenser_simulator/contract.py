@@ -444,7 +444,7 @@ def tool_specs(acceptance_context: str) -> list[dict[str, Any]]:
     if acceptance_context not in {"production_dispenser", "no_load_test"}:
         raise ValueError("Unsupported acceptance context")
 
-    return [
+    specs: list[dict[str, Any]] = [
         {
             "name": "read_dispenser_power_state",
             "description": (
@@ -522,3 +522,36 @@ def tool_specs(acceptance_context: str) -> list[dict[str, Any]]:
             "annotations": READ_ANNOTATIONS,
         },
     ]
+    for spec in specs:
+        if spec["name"] != "shutdown_dispenser_power":
+            spec["inputSchema"]["properties"]["elapsed_s"] = {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400,
+                "default": 0,
+                "description": "Simulated elapsed seconds since the previous physical interaction; actual monotonic wall elapsed is the minimum. Evolves prior output state before this action.",
+            }
+        spec["description"] += (
+            " Simulation time advances irreversibly by max(requested elapsed_s, actual wall elapsed); no intermediate instrument samples are fabricated."
+        )
+        spec["outputSchema"]["properties"]["timing"] = {
+            "type": "object",
+            "properties": {
+                key: {"type": "number", "minimum": 0}
+                for key in (
+                    "requested_elapsed_s",
+                    "wall_elapsed_s",
+                    "advanced_s",
+                    "virtual_time_s",
+                )
+            },
+            "required": [
+                "requested_elapsed_s",
+                "wall_elapsed_s",
+                "advanced_s",
+                "virtual_time_s",
+            ],
+            "additionalProperties": False,
+        }
+        spec["outputSchema"]["required"].append("timing")
+    return specs

@@ -66,9 +66,25 @@ main()
             asyncio.timeout(20),
             Client(f"http://127.0.0.1:{port}/mcp") as client,
         ):
-            assert len((await client.list_tools()).tools) == 7
+            catalog = (await client.list_tools()).tools
+            assert len(catalog) == 7
+            schemas = {tool.name: tool.input_schema for tool in catalog}
+            assert (
+                schemas["read_vacuum_pressure"]["properties"]["elapsed_s"]["maximum"]
+                == 86400
+            )
+            assert "elapsed_s" not in schemas["shutdown_dispenser_power"]["properties"]
             for tool in ("read_vacuum_pressure", "read_dispenser_power_state"):
-                results.append(await client.call_tool(tool, {}))
+                results.append(
+                    await client.call_tool(
+                        tool,
+                        {"elapsed_s": 90} if tool == "read_vacuum_pressure" else {},
+                    )
+                )
+            pressure = results[0].structured_content
+            assert pressure is not None
+            assert pressure["timing"]["requested_elapsed_s"] == 90
+            assert pressure["timing"]["advanced_s"] >= 90
             rejected = await client.call_tool("prepare_dispenser_power", {})
             assert rejected.is_error
             results.append(rejected)

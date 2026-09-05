@@ -81,17 +81,27 @@ class RecordingAdapter:
             rejection = (
                 "Not executed: arguments do not match the closed public tool schema."
             )
+        if rejection is None and "elapsed_s" in args:
+            try:
+                self.router.simulator.validate_elapsed(args["elapsed_s"])
+            except SimulationError as error:
+                rejection = f"Not executed: {error}"
         return await self.service.process_call(
             name, args, self._dispatch, rejection=rejection
         )
 
     async def _dispatch(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
+        previous_timing = self.router.simulator.timing
         try:
             mark_execution_started()
             result = self.router.call(name, arguments)
         except SimulationError as exc:
             return CallToolResult(
-                is_error=True, content=[TextContent(type="text", text=str(exc))]
+                is_error=True,
+                content=[TextContent(type="text", text=str(exc))],
+                _meta={"simulation_timing": self.router.simulator.timing}
+                if self.router.simulator.timing is not previous_timing
+                else None,
             )
         return CallToolResult(
             content=[

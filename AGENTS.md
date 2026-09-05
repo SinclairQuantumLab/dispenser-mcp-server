@@ -172,7 +172,10 @@
   Simulation runs directly in-process with one existing RecordingAdapter and one
   recorder; do not wrap it in the hardware recording server. Canonical simulator
   source lives in src/dispenser_simulator under its specialist's ownership. Keep
-  model/clock behavior unchanged and sibling developer package a bootstrap only.
+  physics equations unchanged and sibling developer package a bootstrap only.
+  Simulation timing is agent-selected elapsed_s with actual monotonic wall time
+  as a floor; controls evolve the prior state first. No fixed per-call ticks.
+  Shutdown accepts no requested delay; decisions/dashboard never reset the clock.
 - Track sanitized settings/*.toml.template* files (including nested instrument
   templates), never actual operator TOMLs. settings/.gitignore owns the recursive
   *.toml exclusion. Preserve local files when changing Git tracking; back up
