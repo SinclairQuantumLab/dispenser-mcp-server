@@ -1,27 +1,29 @@
 # Copy to mcp-settings.toml; replace placeholders before starting with uv run dispenser-conditioning-mcp.
 # Operator startup settings only; tools cannot change these. For simulation use mcp-settings.toml.template.simulation.
+
+# Both backends: integer TCP port 1024..65535, default 8000; change only for a port conflict/deployment need.
+# MCP is always /mcp; the human dashboard shares this port and has separate operator login.
+port = 8000
+# Both backends: strict true/false, default false binds 127.0.0.1; true binds 0.0.0.0.
+# Set true for clients on another computer. This does not enable hardware control.
+allow_remote_access = false
+
 # Backend: "hardware" (default) uses instruments; "simulation" uses the internal model. No automatic fallback.
 backend = "hardware"
 # Required for hardware: "production_dispenser" for approved dispenser wiring,
 # or "no_load_test" for a physically verified unloaded supply and process-local current stop.
+control_enabled = false
 acceptance_context = "<ACCEPTANCE_CONTEXT>"
 # Required PSU identity: exact verified serial, nonempty string, at most 128 characters.
 # Change only when deliberately binding a different supply.
 expected_serial_number = "<SERIAL_NUMBER>"
-# Required hardware fixed compliance voltage: numeric volts, 0 through 32, resolution 0.001 V.
-# Replace the quoted placeholder with an operator-approved number WITHOUT quotes; never infer a safe live voltage.
-compliance_voltage_v = "<COMPLIANCE_VOLTAGE_V>"
-# Hardware power mutations: strict true/false, default false. Enable only for an approved controlled session.
-# Read tools remain available when false; all physical safety checks still apply when true.
-control_enabled = false
-# Both backends: strict true/false, default false binds 127.0.0.1; true binds 0.0.0.0.
-# Set true for clients on another computer. This does not enable hardware control.
-allow_remote_access = false
-# Both backends: integer TCP port 1024..65535, default 8000; change only for a port conflict/deployment need.
-# MCP is always /mcp; the human dashboard shares this port and has separate operator login.
-port = 8000
 # Combined commanded-load current cap in A: numeric >0 through 4.8; default 4.8.
 # Edit for an operator-approved lower cap. reload_dispenser_current_limit() applies only
 # this field without restart or actuation; include this key explicitly to use reload.
 # Lowering does not reduce an existing output. Inspect state; later targets must be <=cap.
 max_load_current_A = 4.8
+# Required hardware fixed compliance voltage: numeric volts, 0 through 32, resolution 0.001 V.
+# Replace the quoted placeholder with an operator-approved number WITHOUT quotes; never infer a safe live voltage.
+compliance_voltage_v = 1.2
+# Hardware power mutations: strict true/false, default false. Enable only for an approved controlled session.
+# Read tools remain available when false; all physical safety checks still apply when true.
