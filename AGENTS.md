@@ -186,3 +186,7 @@
   recorder; do not wrap it in the hardware recording server. Canonical simulator
   source lives in src/dispenser_simulator under its specialist's ownership. Keep
   model/clock behavior unchanged and sibling developer package a bootstrap only.
+- Track sanitized settings/*.toml.template files (including nested instrument
+  templates), never actual operator TOMLs. settings/.gitignore owns the recursive
+  *.toml exclusion. Preserve local files when changing Git tracking; back up
+  settings before pulling the one-time tracked-to-template migration.

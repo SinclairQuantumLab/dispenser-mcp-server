@@ -35,8 +35,17 @@ The recursive clone checks out the pinned `py-siglent-spd3000` source, and
 declared in `pyproject.toml`. If `uv` is missing, follow its
 [official installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
 
-For the real backend, edit the two nonsecret instrument settings files and the main safety/transport
-settings file:
+For the real backend, first copy the tracked templates to local runtime files
+**only when those files do not already exist**, then edit the copies:
+
+```sh
+cp settings/mcp-settings.toml.template settings/mcp-settings.toml
+cp settings/hicube-neo-client-settings.toml.template settings/hicube-neo-client-settings.toml
+cp settings/py-siglent-spd3000/gateway-settings.toml.template settings/py-siglent-spd3000/gateway-settings.toml
+```
+
+`settings/.gitignore` excludes actual `*.toml` recursively; templates stay tracked.
+Runtime paths are unchanged. MCP-owned settings no longer require `schema_version`; legacy keys are accepted and ignored (record/observer/HIL schemas are unchanged):
 
 ```text
 settings/mcp-settings.toml
@@ -81,11 +90,27 @@ During first commissioning, call only `read_vacuum_pressure` and
 [detailed Raspberry Pi research guide](deployment/raspberrypi/QUICK_COMMISSIONING.md)
 for the supervised commissioning sequence.
 
+### One-time update from tracked settings
+
+Before pulling this settings-template migration, back up your existing `settings/`
+directory outside the checkout, including any operator credentials, and keep the
+backup private. Git may remove previously tracked clean TOMLs during the pull or
+refuse the pull when they contain local edits. Preserve those edits; do not use
+reset/checkout to discard them. Restore the needed actual TOMLs from your backup
+after updating, or copy templates only for missing files. Future actual settings
+are ignored and will no longer be replaced by tracked defaults.
+
 ## Independent simulation host
 
 After the same recursive clone and ordinary `uv sync`, replace only
-`settings/mcp-settings.toml` with `settings/simulation-example.toml` (preserve any
-existing operator profile first). Set `allow_remote_access = true` if the decision
+`settings/mcp-settings.toml` with a copy of `settings/simulation-example.toml.template` (preserve any
+existing operator profile first). For a fresh simulation host:
+
+```sh
+cp settings/simulation-example.toml.template settings/mcp-settings.toml
+```
+
+Set `allow_remote_access = true` if the decision
 agent is on another machine, then run the same command:
 
 ```sh

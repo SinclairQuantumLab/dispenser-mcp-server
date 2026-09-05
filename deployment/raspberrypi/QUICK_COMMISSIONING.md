@@ -12,10 +12,19 @@ instead of this real-instrument commissioning procedure. No Pi change is require
 git clone --recurse-submodules https://github.com/SinclairQuantumLab/dispenser-mcp-server.git
 cd dispenser-mcp-server
 uv sync
+# Fresh checkout only: do not overwrite existing operator files.
+cp settings/mcp-settings.toml.template settings/mcp-settings.toml
+cp settings/hicube-neo-client-settings.toml.template settings/hicube-neo-client-settings.toml
+cp settings/py-siglent-spd3000/gateway-settings.toml.template settings/py-siglent-spd3000/gateway-settings.toml
 cp settings/py-siglent-spd3000/gateway-auth.toml.template \
   settings/py-siglent-spd3000/gateway-auth.toml
 chmod 600 settings/py-siglent-spd3000/gateway-auth.toml
 ```
+
+Templates are tracked; actual TOMLs are ignored recursively by settings/.gitignore.
+For an existing clone, back up settings outside the checkout **before pulling**
+the one-time template migration: Git can remove clean tracked TOMLs or block on
+local edits. Preserve/restore your copies; never discard them with reset/checkout.
 
 Fill the placeholders in the three nonsecret settings files:
 `settings/mcp-settings.toml`, `settings/hicube-neo-client-settings.toml`, and

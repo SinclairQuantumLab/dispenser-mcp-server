@@ -43,11 +43,7 @@ def create_startup_server(
         "control_enabled",
         "unloaded_hil_state_file",
     }
-    if (
-        set(document) - allowed
-        or type(document.get("schema_version")) is not int
-        or document["schema_version"] != 1
-    ):
+    if set(document) - allowed:
         raise ConfigurationError("Invalid simulation startup document")
     remote, port = (
         document.get("allow_remote_access", False),

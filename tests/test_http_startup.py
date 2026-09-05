@@ -110,7 +110,6 @@ class SPD3000:
     gateway_settings.mkdir(parents=True)
     (settings / "mcp-settings.toml").write_text(
         """
-schema_version = 1
 acceptance_context = "production_dispenser"
 expected_serial_number = "SPD-HTTP"
 compliance_voltage_v = 10.0
@@ -121,7 +120,6 @@ allow_remote_access = false
     )
     (settings / "hicube-neo-client-settings.toml").write_text(
         """
-schema_version = 1
 host = "offline.test"
 port = 4840
 timeout_s = 1.0
@@ -130,7 +128,6 @@ timeout_s = 1.0
     )
     (gateway_settings / "gateway-settings.toml").write_text(
         """
-schema_version = 1
 identifier = "offline.test:8765"
 timeout_s = 1.0
 minimum_command_interval_ms = 100.0

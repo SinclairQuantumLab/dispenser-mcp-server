@@ -26,7 +26,7 @@ async def test_independent_source_copy_runs_simulator_over_http(tmp_path: Path):
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
     (clone / "settings" / "mcp-settings.toml").write_text(
-        f'schema_version=1\nbackend="simulation"\nport={port}\n[simulation]\nseed="connectivity-fixture"\nscenario="nominal_recovery"\n',
+        f'backend="simulation"\nport={port}\n[simulation]\nseed="connectivity-fixture"\nscenario="nominal_recovery"\n',
         encoding="utf-8",
     )
     # Copy has no sibling simulator, live settings, credentials, or drivers.

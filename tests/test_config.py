@@ -9,6 +9,16 @@ from dispenser_conditioning_mcp.config import (
 )
 
 
+def test_legacy_settings_version_is_inert(tmp_path: Path) -> None:
+    layout = _write_layout(
+        tmp_path,
+        main_extra='schema_version = "legacy"\n',
+        hicube_extra="schema_version = 999\n",
+        gateway_extra="schema_version = false\n",
+    )
+    assert OperatorConfiguration.from_toml(layout).startup.control_enabled is False
+
+
 def _write_layout(
     tmp_path: Path,
     *,
@@ -40,7 +50,6 @@ def _write_layout(
         )
     layout.mcp_settings_file.write_text(
         (
-            "schema_version = 1\n"
             f'acceptance_context = "{acceptance_context}"\n'
             'expected_serial_number = "SPD-OFFLINE"\n'
             "compliance_voltage_v = 10.0\n"
@@ -51,7 +60,6 @@ def _write_layout(
     )
     layout.hicube_settings_file.write_text(
         (
-            "schema_version = 1\n"
             'host = "192.0.2.10"\n'
             "port = 4841\n"
             "timeout_s = 2.5\n"
@@ -61,7 +69,6 @@ def _write_layout(
     )
     layout.siglent_gateway_settings_file.write_text(
         (
-            "schema_version = 1\n"
             'identifier = "offline.test:8765"\n'
             "timeout_s = 2.0\n"
             "minimum_command_interval_ms = 100.0\n"

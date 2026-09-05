@@ -13,7 +13,6 @@ from typing import Literal, cast
 
 from dispenser_conditioning_mcp.power_domain import PowerAcceptanceContext
 
-SETTINGS_SCHEMA_VERSION = 1
 DEFAULT_OPC_UA_PORT = 4840
 DEFAULT_TIMEOUT_S = 5.0
 DEFAULT_SIGLENT_TIMEOUT_S = 5.0
@@ -119,7 +118,6 @@ class McpStartupConfiguration:
             },
             "MCP settings",
         )
-        _schema_version(document, "MCP settings")
         if document.get("backend", "real") != "real":
             raise ConfigurationError("Hardware configuration requires backend = real")
         acceptance_context = cast(
@@ -187,7 +185,6 @@ class HiCubeConfiguration:
             {"schema_version", "host", "port", "timeout_s"},
             "HiCube settings",
         )
-        _schema_version(document, "HiCube settings")
         client_file = layout.hicube_client_file
         if client_file.name != "hicube_neo_client.py" or not client_file.is_file():
             raise ConfigurationError(
@@ -255,7 +252,6 @@ class SiglentConfiguration:
             },
             "Siglent gateway settings",
         )
-        _schema_version(document, "Siglent gateway settings")
         driver_src = layout.siglent_driver_src
         if not (driver_src / "siglent_spd3000" / "__init__.py").is_file():
             raise ConfigurationError(
@@ -342,14 +338,6 @@ def _read_toml(path: Path, label: str) -> dict[str, object]:
 def _closed_keys(document: Mapping[str, object], allowed: set[str], label: str) -> None:
     if set(document) - allowed:
         raise ConfigurationError(f"{label} contains an unknown setting.")
-
-
-def _schema_version(document: Mapping[str, object], label: str) -> None:
-    value = document.get("schema_version")
-    if type(value) is not int or value != SETTINGS_SCHEMA_VERSION:
-        raise ConfigurationError(
-            f"{label} schema_version must equal {SETTINGS_SCHEMA_VERSION}."
-        )
 
 
 def _unloaded_hil_state_file(

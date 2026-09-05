@@ -1,5 +1,4 @@
 # HiCube Neo OPC UA settings. The client implementation is vendored in this repo.
-schema_version = 1
 host = "replace-with-hicube-host"
 port = 4840
 timeout_s = 5.0
