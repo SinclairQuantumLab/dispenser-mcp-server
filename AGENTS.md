@@ -218,3 +218,7 @@
 - Separate the configurable software maximum 6.4 A from SPD native 3.2 A /
   parallel 6.4 A device capability in current_policy.py. Default operator cap is
   4.8 A; effective is the minimum. Physics reference-power constants are unrelated.
+- Keep the dashboard overview focused on pressure, current, requests/results and
+  authorized simulation remaining inventories; voltage/model diagnostics/tokens go
+  below. Never fetch or retain model traces/details for anonymous viewers, including
+  after authorization loss. Inventory percentages use each substance's own initial amount.

@@ -24,8 +24,8 @@ function elapsedAxis(values, range) {
     title:{text:"Virtual elapsed · " + (hours ? (showSeconds ? (fractional ? "HH:MM:SS.sss" : "HH:MM:SS") : "HH:MM") + " (hours may exceed 24)" : (fractional ? "MM:SS.sss" : "MM:SS"))}};
 }
 const sharedView = {mode:"full",range:null,width:null,wall:false};
-const chartStates = Object.fromEntries(["chart","truth-chart","token-chart"].map(id=>[id,{busy:0,queue:Promise.resolve()}]));
-const autoY = {chart:[true,true,true,false],"truth-chart":[false,true,true],"token-chart":[true,true]};
+const chartStates = Object.fromEntries(["chart","voltage-chart","truth-chart","token-chart"].map(id=>[id,{busy:0,queue:Promise.resolve()}]));
+const autoY = {chart:[true,true,false,false],"voltage-chart":[true],"truth-chart":[true,true,true],"token-chart":[true,true]};
 const gridStyle = {showgrid:true,gridcolor:"#40556b",showline:true,linecolor:"#6c8197",linewidth:1,mirror:true,zeroline:false};
 let redrawQueue=Promise.resolve();
 function timeNumber(value, wall) {
@@ -50,7 +50,7 @@ function timeRange(state, values) {
   return state.range;
 }
 function viewIds(id) {
-  return id==="chart"?["time-view","time-width",4]:id==="truth-chart"?["truth-time-view","truth-time-width",3]:["token-time-view","token-time-width",2];
+  return id==="chart"?["time-view","time-width",metadata.session_kind==="simulated"?4:3]:id==="voltage-chart"?["voltage-time-view","voltage-time-width",1]:id==="truth-chart"?["truth-time-view","truth-time-width",3]:["token-time-view","token-time-width",2];
 }
 function updateWidth() {
   const width=sharedView.range?sharedView.range[1]-sharedView.range[0]:(sharedView.width||(sharedView.wall?60000:1));
@@ -108,7 +108,7 @@ function applyY(id,layout,traces) {
   for(let panel=1;panel<=viewIds(id)[2];panel++) {
     const key=panel===1?"yaxis":"yaxis"+panel,axis=layout[key];
     Object.assign(axis,gridStyle);
-    if(id==="chart"&&panel===4) continue;
+    if(id==="chart"&&panel===3) continue;
     const old=graph.layout?.[key]?.range;
     const range=autoY[id][panel-1]?visibleExtent(traces,panel,sharedView.range,sharedView.wall,axis.type==="log"):null;
     axis.range=range||old||axis.range||(axis.type==="log"?[-9,-6]:[0,1]);
@@ -116,7 +116,7 @@ function applyY(id,layout,traces) {
   }
 }
 function redrawAll() {
-  const next=redrawQueue.then(async()=>{sharedView.wall=el("clock").value==="wall";await draw();await drawTokens();if(truthData) await drawTruth(truthData,true);});
+  const next=redrawQueue.then(async()=>{sharedView.wall=el("clock").value==="wall";await draw();await drawVoltage();await drawTokens();if(truthData) await drawTruth(truthData,true);});
   redrawQueue=next.catch(()=>{});return next;
 }
 function watchTimeView(id) {
@@ -351,36 +351,73 @@ async function draw() {
     trace("pressure_mbar", "Observed total pressure · mbar", "#e1c77c", 1, r => r.observation_kind === "pressure"),
     trace("commanded_load_current_limit_a", "Returned commanded load limit · A", "#8cafe2", 2, r => r.observation_kind === "power"),
     trace("native_ch1_measured_current_a", "Measured native CH1 · A", "#6edbc9", 2, r => r.observation_kind === "power"),
-    trace("native_ch1_voltage_setpoint_v", "Native voltage setpoint · V", "#c7a4e9", 3, r => r.observation_kind === "power"),
-    trace("native_ch1_measured_voltage_v", "Measured native CH1 voltage · V", "#80c8e5", 3, r => r.observation_kind === "power"),
   ];
   const requested = controls.filter(r => r.phase === "call_intent" && xFor(r) !== null && num(r.requested_load_current_a) !== null);
   traces.push({ type: "scatter", mode: "markers", name: "Requested load target · A", x: requested.map(xFor), y: requested.map(r => r.requested_load_current_a), xaxis: "x2", yaxis: "y2", marker: { color: "#efbc72", symbol: "diamond-open", size: 9 }, customdata: requested.map(r => r.event_id), text: requested.map(r => shortId(r.event_id)), hovertemplate: "%{text}<br>Requested load: %{y} A<extra></extra>" });
   for (const [status, y, color, symbol, label] of [["intent", 3, "#efbc72", "diamond-open", "Requested"], ["succeeded", 2, "#6edbc9", "circle", "Completed"], ["not_executed", 1, "#cbb9ff", "square-open", "Not executed"], ["failed", 0, "#fb978d", "x", "Error / state uncertain"]]) {
     const rows = controls.filter(r => (status === "not_executed" ? outcome(byId.get(r.event_id)) === "Not executed" : r.status === status && outcome(byId.get(r.event_id)) !== "Not executed") && xFor(r) !== null);
-    traces.push({ type: "scatter", mode: "markers", name: label, x: rows.map(xFor), y: rows.map(() => y), xaxis: "x4", yaxis: "y4", marker: { color, symbol, size: 10 }, customdata: rows.map(r => r.event_id), text: rows.map(r => `${shortId(r.event_id)} · ${toolLabel(r.tool)}<br>${outcome(byId.get(r.event_id))}<br>${r.error || ""}${el("clock").value === "virtual" && !r.observed_at ? "<br>Position: "+placementLabel(r) : ""}`), hovertemplate: "%{text}<extra></extra>" });
+    traces.push({ type: "scatter", mode: "markers", name: label, x: rows.map(xFor), y: rows.map(() => y), xaxis: "x3", yaxis: "y3", marker: { color, symbol, size: 10 }, customdata: rows.map(r => r.event_id), text: rows.map(r => `${shortId(r.event_id)} · ${toolLabel(r.tool)}<br>${outcome(byId.get(r.event_id))}<br>${r.error || ""}${el("clock").value === "virtual" && !r.observed_at ? "<br>Position: "+placementLabel(r) : ""}`), hovertemplate: "%{text}<extra></extra>" });
   }
-  const elapsedValues = traces.flatMap(t => t.x);
-  const elapsedTicks = elapsedAxis(elapsedValues, el("chart").layout?.xaxis?.autorange ? null : el("chart").layout?.xaxis?.range);
-  const axisBase = { ...(axis === "virtual" ? elapsedTicks : {}), type: axis === "wall" ? "date" : "linear", gridcolor: "#304254", zeroline: false, title: { text: axis === "wall" ? "Recorded wall time · UTC" : elapsedTicks.title.text }, automargin: true };
-  const layout = { paper_bgcolor: "#152330", plot_bgcolor: "#152330", font: { color: "#c9d8e5", size: 11 }, margin: { t: 60, r: 30, b: 45, l: 95 }, height: 800, hovermode: "closest", dragmode: "zoom", uirevision: `${metadata.session_id}:${generation}:${axis}`, legend: { orientation: "h", x: 0, y: 1.1, font: { size: 10 } },
-    xaxis: { ...axisBase, anchor: "y", showticklabels: false, title: null },
-    xaxis2: { ...axisBase, anchor: "y2", matches: "x", showticklabels: false, title: null },
-    xaxis3: { ...axisBase, anchor: "y3", matches: "x", showticklabels: false, title: null },
-    xaxis4: { ...axisBase, anchor: "y4", matches: "x" },
-    yaxis: { domain: [0.76, 1], title: { text: "Pressure · mbar" }, type: "log", tickformat: ".3e", exponentformat: "e", nticks: 5, gridcolor: "#304254", automargin: true },
-    yaxis2: { domain: [0.49, 0.71], title: { text: "Current · A" }, gridcolor: "#304254", rangemode: "tozero", automargin: true },
-    yaxis3: { domain: [0.23, 0.44], title: { text: "Voltage · V" }, gridcolor: "#304254", rangemode: "tozero", automargin: true },
-    yaxis4: { domain: [0, 0.17], title: { text: "Power requests<br>and results" }, tickvals: [0, 1, 2, 3], ticktext: ["Error / uncertain", "Not executed", "Completed", "Requested"], range: [-0.5, 3.5], gridcolor: "#304254", automargin: true } };
-  sharedView.wall=axis==="wall";
-  viewLayout("chart",layout,elapsedValues.filter(v=>v!==null));
+  const simulated=metadata.session_kind==="simulated";
+  const modelRows=simulated&&operatorAuthorized?truthRows.filter(r=>modelX(r)!==null):[];
+  for(const [field,name,color] of [["rb_remaining_fraction","Rb remaining · %","#e5bc75"],["impurity_remaining_fraction","Impurity remaining · %","#80d8d0"]]) {
+    if(simulated&&operatorAuthorized) traces.push({type:"scatter",mode:"lines+markers",name,x:modelRows.map(modelX),
+      y:modelRows.map(r=>num(r.state[field])===null?null:r.state[field]*100),xaxis:"x4",yaxis:"y4",
+      line:{color,width:2},marker:{size:4},connectgaps:false,customdata:modelRows.map(r=>({model_sequence:r.sequence})),
+      text:modelRows.map(r=>"Model snapshot S"+r.sequence+"<br>"+(sharedView.wall?modelX(r):elapsedDetail(r.virtual_time_s/60))),
+      hovertemplate:"%{text}<br>%{y:.2f}% of own initial inventory<extra>"+name+"</extra>"});
+  }
+  el("inventory-note").hidden=!simulated;
+  el("inventory-unlock").hidden=operatorAuthorized;
+  el("inventory-caption").textContent=operatorAuthorized?"Model-only remaining stock: each substance as % of its own initial inventory, not measured mass fractions.":"Remaining stock is locked; ordinary plots continue without internal data.";
+  el("chart-auto-y-4").parentElement.hidden=!simulated||!operatorAuthorized;
+  const base={automargin:true,showticklabels:false};
+  const layout={paper_bgcolor:"#152330",plot_bgcolor:"#152330",font:{color:"#c9d8e5",size:11},
+    margin:{t:65,r:30,b:45,l:110},height:680,hovermode:"closest",dragmode:"zoom",
+    uirevision:metadata.session_id+":"+generation+":"+axis+":"+simulated,legend:{orientation:"h",x:0,y:1.13,font:{size:10}},
+    xaxis:{...base,anchor:"y"},xaxis2:{...base,anchor:"y2",matches:"x"},
+    xaxis3:{...base,anchor:"y3",matches:"x",showticklabels:!simulated},
+    yaxis:{domain:simulated?[.75,1]:[.65,1],title:{text:"Pressure · mbar"},type:"log",tickformat:".3e",nticks:5,automargin:true},
+    yaxis2:{domain:simulated?[.43,.68]:[.26,.56],title:{text:"Current · A"},automargin:true},
+    yaxis3:{domain:simulated?[.24,.35]:[0,.17],title:{text:"Requests<br>and results"},tickvals:[0,1,2,3],
+      ticktext:["Error / uncertain","Not executed","Completed","Requested"],range:[-.5,3.5],automargin:true}};
+  if(simulated) {
+    layout.xaxis4={...base,anchor:"y4",matches:"x",showticklabels:true};
+    layout.yaxis4={domain:[0,.17],title:{text:"Model remaining · %"},range:[0,100],automargin:true};
+    if(!modelRows.length) layout.annotations=[{xref:"paper",yref:"paper",x:.5,y:.085,showarrow:false,
+      text:operatorAuthorized?"No model snapshots with this clock available":"Internal inventory locked · use Unlock internal inventory",font:{color:"#ffda85"}}];
+  }
+  viewLayout("chart",layout);
+  if(simulated&&!modelRows.length) {
+    layout.xaxis3.showticklabels=true;layout.xaxis3.title=layout.xaxis4.title;
+    layout.xaxis4.showticklabels=false;layout.xaxis4.title=null;
+  }
   applyY("chart",layout,traces);
-  await guardedPlot("chart",()=>Plotly.react("chart", traces, layout, { responsive: true, displaylogo: false, scrollZoom: true }));
-  if (!chartReady) {
-    el("chart").on("plotly_click", data => { const id = data.points[0]?.customdata; if (id) selectEvent(id); });
-  }
-  watchTimeView("chart", elapsedValues);
-  chartReady = true;
+  await guardedPlot("chart",()=>Plotly.react("chart",traces,layout,{responsive:true,displaylogo:false,scrollZoom:true}));
+  el("chart").removeAllListeners("plotly_click");
+  el("chart").on("plotly_click",data=>{const id=data.points[0]?.customdata;if(id?.model_sequence!==undefined) selectModel(id.model_sequence);else if(id) selectEvent(id);});
+  watchTimeView("chart");chartReady=true;
+}
+async function drawVoltage() {
+  const rows=observations.filter(r=>r.observation_kind==="power"&&xFor(r)!==null);
+  const traces=[["native_ch1_voltage_setpoint_v","Native CH1 voltage limit · V","#c7a4e9"],["native_ch1_measured_voltage_v","Measured native CH1 voltage · V","#80c8e5"]].map(([field,name,color])=>({
+    type:"scatter",mode:"lines+markers",name,x:rows.map(xFor),y:rows.map(r=>num(r[field])),line:{color,width:2,shape:field.includes("setpoint")?"hv":"linear"},marker:{size:4},connectgaps:false,
+    customdata:rows.map(r=>r.event_id),text:rows.map(r=>shortId(r.event_id)+"<br>"+(sharedView.wall?xFor(r):elapsedDetail(xFor(r)))),
+    hovertemplate:"%{text}<br>%{y} V<extra>"+name+"</extra>"}));
+  const layout={paper_bgcolor:"#152330",plot_bgcolor:"#152330",font:{color:"#c9d8e5"},height:300,margin:{t:50,r:30,b:50,l:110},
+    uirevision:metadata.session_id+":"+generation+":"+sharedView.wall,legend:{orientation:"h",y:1.2},xaxis:{anchor:"y",automargin:true},yaxis:{title:{text:"Voltage · V"},automargin:true}};
+  viewLayout("voltage-chart",layout);applyY("voltage-chart",layout,traces);
+  await guardedPlot("voltage-chart",()=>Plotly.react("voltage-chart",traces,layout,{responsive:true,displaylogo:false,scrollZoom:true}));
+  el("voltage-chart").removeAllListeners("plotly_click");
+  el("voltage-chart").on("plotly_click",data=>{const id=data.points[0]?.customdata;if(id) selectEvent(id);});
+  watchTimeView("voltage-chart");
+}
+function clearTruth() {
+  const had=truthRows.length>0||truthData!==null;
+  truthMore=false;truthRows=[];truthData=null;truthCursor=0;truthGeneration=-1;truthRevision=null;
+  el("truth-selected").textContent="No model snapshot selected.";el("truth-selected").classList.remove("highlight");
+  el("truth-raw").textContent="";el("truth-parameters").textContent="";Plotly.purge("truth-chart");
+  return had;
 }
 
 function readFailure(error) {
@@ -398,8 +435,8 @@ async function poll() {
     if (!response.ok) { const problem = await response.json(); throw new Error(`HTTP ${response.status}: ${problem.error || "Dashboard request failed"}`); }
     const data = await response.json();
     el("view-mode").textContent = data.recording_view === "saved_recording" ? "SAVED RUN" : "LIVE VIEW · current process";
-    const changed = data.reset || (data.events?.length || 0) > 0;
-    if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); resultsByCall.clear(); recordNumbers.clear(); selectedId = null; resetTimeView("chart");resetTimeView("truth-chart");truthCursor=0;truthGeneration=-1;truthRows=[];truthData=null;truthMore=false;truthRevision=null; }
+    const changed = data.reset || (data.events?.length || 0) > 0 || operatorAuthorized !== (data.operator_authorized === true);
+    if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); resultsByCall.clear(); recordNumbers.clear(); selectedId = null; resetTimeView("chart");resetTimeView("truth-chart");clearTruth(); }
     metadata = data.metadata || metadata;
     operatorAuthorized = data.operator_authorized === true;
     runManagement = data.run_management || {};
@@ -437,13 +474,13 @@ async function poll() {
 }
 async function pollTruth(force=false) {
   const section=el("inside");section.hidden=metadata.session_kind!=="simulated";
-  if (section.hidden) {truthMore=false;return;}
+  if (section.hidden) return clearTruth();
   el("truth-content").hidden=!operatorAuthorized;el("truth-locked").hidden=operatorAuthorized;
-  if(!operatorAuthorized) {truthMore=false;truthRows=[];truthData=null;truthCursor=0;truthGeneration=-1;truthRevision=null;Plotly.purge("truth-chart");return;}
+  if(!operatorAuthorized) return clearTruth();
   if (force) {if(truthData) await drawTruth(truthData,true);return;}
   try {
     const response=await fetch(`/api/simulation-state?after=${truthCursor}&generation=${truthGeneration}&${runQuery}`,{cache:"no-store",signal:AbortSignal.timeout(5000)});
-    if(response.status===401||response.status===403) {operatorAuthorized=false;truthMore=false;el("truth-content").hidden=true;el("truth-locked").hidden=false;return;}
+    if(response.status===401||response.status===403) {operatorAuthorized=false;el("truth-content").hidden=true;el("truth-locked").hidden=false;clearTruth();return true;}
     if(!response.ok) throw new Error("HTTP "+response.status);
     const data=await response.json();
     if(data.reset) {truthRows=[];truthRevision=null;}
@@ -465,23 +502,21 @@ async function drawTruth(data,force=false) {
     truthRevision = revision;
     if (data.status !== "ready" || !allRows.length) { Plotly.purge("truth-chart"); return; }
     const p = data.parameters || rows[0]?.parameters || {};
-    const last = allRows.at(-1).state;
     el("truth-time-note").textContent=sharedView.wall ? (allRows.length-rows.length)+" model snapshots lack recorded wall time and are omitted; virtual view retains them." : "Model and public elapsed-time axes are synchronized. Synthetic observed_at is never treated as real wall time.";
-    el("truth-parameters").textContent = "Synthetic loading: initial Rb " + fmt(p.initial_rb_effective_units) + " units; initial impurity " + fmt(p.initial_impurity_effective_units) + " units; ratio " + fmt(p.initial_rb_to_impurity_effective_ratio) + " (not measured mass/composition). Fixed resistance " + fmt(p.resistance_ohm) + " Ω. Remaining: Rb " + fmt(num(last.rb_remaining_fraction) === null ? null : last.rb_remaining_fraction * 100) + "%; impurity " + fmt(num(last.impurity_remaining_fraction) === null ? null : last.impurity_remaining_fraction * 100) + "%. Thermal state is normalized, not kelvin.";
+    el("truth-parameters").textContent = "Synthetic loading: initial Rb " + fmt(p.initial_rb_effective_units) + " units; initial impurity " + fmt(p.initial_impurity_effective_units) + " units; ratio " + fmt(p.initial_rb_to_impurity_effective_ratio) + " (not measured mass/composition). Fixed resistance " + fmt(p.resistance_ohm) + " Ω. Thermal state is normalized, not kelvin.";
     const series = (field,name,color,panel,scale=1) => ({type:"scatter",mode:"lines",name,
       x:rows.map(modelX),y:rows.map(r=>num(r.state[field]) === null ? null : r.state[field]*scale),
       xaxis:panel === 1 ? "x" : "x"+panel,yaxis:panel === 1 ? "y" : "y"+panel,
       line:{color,width:2},connectgaps:false,customdata:rows.map(r=>r.sequence),text:rows.map(r=>"Model snapshot S"+r.sequence+"<br>"+(sharedView.wall?modelX(r):elapsedDetail(r.virtual_time_s/60))),
       hovertemplate:"%{text}<br>%{y}<extra>"+name+"</extra>"});
     const traces = [
-      series("rb_remaining_fraction","Rb remaining · %","#e5bc75",1,100),
-      series("impurity_remaining_fraction","Impurity remaining · %","#80d8d0",1,100),
-      series("rb_release_rate_effective_units_per_s","Rb release · synthetic units/s","#e5bc75",2),
-      series("impurity_release_rate_effective_units_per_s","Impurity release · synthetic units/s","#80d8d0",2),
-      series("total_pressure_mbar","Total model pressure · mbar","#ffffff",3),
-      series("rb_pressure_mbar","Rb model pressure · mbar","#e5bc75",3),
-      series("impurity_pressure_mbar","Impurity model pressure · mbar","#80d8d0",3),
-      series("background_pressure_mbar","Background model pressure · mbar","#91a9ca",3)
+      series("rb_release_rate_effective_units_per_s","Rb release · synthetic units/s","#e5bc75",1),
+      series("impurity_release_rate_effective_units_per_s","Impurity release · synthetic units/s","#80d8d0",1),
+      series("total_pressure_mbar","Total model pressure · mbar","#ffffff",2),
+      series("rb_pressure_mbar","Rb model pressure · mbar","#e5bc75",2),
+      series("impurity_pressure_mbar","Impurity model pressure · mbar","#80d8d0",2),
+      series("background_pressure_mbar","Background model pressure · mbar","#91a9ca",2),
+      series("thermal_state","Thermal state · normalized, not kelvin","#c7a4e9",3)
     ];
     const truthTicks = elapsedAxis(rows.map(r=>r.virtual_time_s/60), el("truth-chart").layout?.xaxis?.autorange ? null : el("truth-chart").layout?.xaxis?.range);
     const base={gridcolor:"#304254",automargin:true};
@@ -491,24 +526,23 @@ async function drawTruth(data,force=false) {
       xaxis:{...base,...truthTicks,title:null,anchor:"y",showticklabels:false},
       xaxis2:{...base,...truthTicks,title:null,anchor:"y2",matches:"x",showticklabels:false},
       xaxis3:{...base,...truthTicks,anchor:"y3",matches:"x",title:truthTicks.title},
-      yaxis:{...base,domain:[.72,1],range:[0,100],title:{text:"Remaining · %"}},
-      yaxis2:{...base,domain:[.38,.64],rangemode:"tozero",title:{text:"Release · units/s"}},
-      yaxis3:{...base,domain:[0,.29],type:"log",tickformat:".3e",title:{text:"Model pressure · mbar"}}
+      yaxis:{...base,domain:[.72,1],title:{text:"Release · units/s"}},
+      yaxis2:{...base,domain:[.38,.64],type:"log",tickformat:".3e",title:{text:"Model pressure · mbar"}},
+      yaxis3:{...base,domain:[0,.29],title:{text:"Thermal · normalized"}}
     };
     viewLayout("truth-chart",truthLayout,rows.map(r=>r.virtual_time_s/60));
     applyY("truth-chart",truthLayout,traces);
     await guardedPlot("truth-chart",()=>Plotly.react("truth-chart",traces,truthLayout,{responsive:true,displaylogo:false,scrollZoom:true}));
     watchTimeView("truth-chart", rows.map(r=>r.virtual_time_s/60));
     el("truth-chart").removeAllListeners("plotly_click");
-    el("truth-chart").on("plotly_click", clicked => {
-      const row = truthRows.find(r => r.sequence === clicked.points[0]?.customdata);
-      if (!row) return;
-      el("truth-selected").textContent = "Model snapshot S" + row.sequence + " · " + elapsedDetail(row.virtual_time_s / 60) + " · Rb remaining " + fmt(num(row.state.rb_remaining_fraction) === null ? null : row.state.rb_remaining_fraction * 100) + "% · Impurity remaining " + fmt(num(row.state.impurity_remaining_fraction) === null ? null : row.state.impurity_remaining_fraction * 100) + "%. Model state only; not a supporting observation.";
-      el("truth-raw").textContent = JSON.stringify(row,null,2);
-      el("truth-selected").classList.add("highlight");
-      el("truth-selected").scrollIntoView({behavior:"smooth",block:"center"});
-    });
-
+    el("truth-chart").on("plotly_click",clicked=>selectModel(clicked.points[0]?.customdata));
+}
+function selectModel(sequence) {
+  if(!operatorAuthorized) return;
+  const row=truthRows.find(r=>r.sequence===sequence);if(!row) return;
+  el("truth-selected").textContent="Model snapshot S"+row.sequence+" · "+elapsedDetail(row.virtual_time_s/60)+" · Rb remaining "+fmt(num(row.state.rb_remaining_fraction)===null?null:row.state.rb_remaining_fraction*100)+"% · Impurity remaining "+fmt(num(row.state.impurity_remaining_fraction)===null?null:row.state.impurity_remaining_fraction*100)+"%. Each relative to its own initial inventory; not a supporting observation.";
+  el("truth-raw").textContent=JSON.stringify(row,null,2);el("truth-selected").classList.add("highlight");
+  el("truth-selected").scrollIntoView({behavior:"smooth",block:"center"});
 }
 
 el("clock").addEventListener("change",()=>{sharedView.wall=el("clock").value==="wall";resetTimeView();redrawAll().catch(showViewError);});
@@ -518,12 +552,13 @@ for(const id of Object.keys(chartStates)) {
     captureRange(id);sharedView.mode=el(selectId).value;updateWidth();
     redrawAll().catch(showViewError);
   });
-  el(id==="chart"?"fit":id==="truth-chart"?"truth-fit":"token-fit").addEventListener("click",()=>{
+  el(id==="chart"?"fit":id==="truth-chart"?"truth-fit":id==="voltage-chart"?"voltage-fit":"token-fit").addEventListener("click",()=>{
     resetTimeView();redrawAll().catch(showViewError);
   });
-  const container=el(id==="chart"?"main-auto-y":id==="truth-chart"?"truth-auto-y":"token-auto-y");
-  const labels=id==="chart"?["Pressure","Current","Voltage"]:id==="truth-chart"?["Inventory","Release","Model pressure"]:["Per report","Cumulative"];
-  labels.forEach((label,index)=>{
+  const container=el(id==="chart"?"main-auto-y":id==="truth-chart"?"truth-auto-y":id==="voltage-chart"?"voltage-auto-y":"token-auto-y");
+  const labels=id==="chart"?[["Pressure",1],["Current",2],["Inventory",4]]:id==="truth-chart"?[["Release",1],["Model pressure",2],["Thermal",3]]:id==="voltage-chart"?[["Voltage",1]]:[["Per report",1],["Cumulative",2]];
+  labels.forEach(([label,panel])=>{
+    const index=panel-1;
     const control=document.createElement("input");control.type="checkbox";control.checked=autoY[id][index];
     control.id=id+"-auto-y-"+(index+1);
     control.addEventListener("change",()=>{autoY[id][index]=control.checked;redrawAll().catch(showViewError);});

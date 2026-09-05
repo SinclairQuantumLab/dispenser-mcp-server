@@ -582,3 +582,10 @@ CSVs remain unchanged. The current process run cannot be archived or deleted.
 confirmation; it removes the whole folder, including observer files, irreversibly.
 No management tools are exposed through MCP, and these actions never control
 equipment or change which run is recording.
+
+The main dashboard overview stacks observed pressure, commanded-load/native-CH1 current,
+request results, and (for authorized simulation viewers) remaining inventories in one
+680 px figure. Each remaining percentage refers to that substance’s own initial inventory,
+not measured mass fractions. Anonymous simulation viewers see a locked placeholder;
+hardware runs have three overview panels. Voltage, model release/pressure/thermal details,
+and token accounting remain in supplementary sections with the same shared time range.
