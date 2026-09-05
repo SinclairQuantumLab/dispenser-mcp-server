@@ -5,6 +5,7 @@ allow_remote_access = false
 port = 8000
 
 [simulation]
+# These are runnable, disclosed example values; choose operator-only values for a blind run.
 seed = "operator-connectivity-example"
 scenario = "nominal_recovery"
 control_enabled = true

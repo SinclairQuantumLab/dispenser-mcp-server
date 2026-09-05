@@ -1,5 +1,5 @@
 # py-siglent-spd3000 authenticated gateway settings.
-i# Replace `<IDENTIFIER>` placeholder with the IP address of a py-siglent-spd3000 gateway server
-dentifier = "<IDENTIFIER>"
+# Replace `<IDENTIFIER>` placeholder with the IP address of a py-siglent-spd3000 gateway server
+identifier = "<IDENTIFIER>"
 timeout_s = 5.0
 minimum_command_interval_ms = 100.0

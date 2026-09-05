@@ -1,8 +1,11 @@
 # MCP process and deployment-specific safety settings.
 backend = "real"
-acceptance_context = "replace-with-production_dispenser-or-unloaded_hil"
-expected_serial_number = "replace-with-verified-serial"
-compliance_voltage_v = "replace-with-approved-voltage"
+# Replace `<ACCEPTANCE_CONTEXT>` with "production_dispenser" or "unloaded_hil".
+acceptance_context = "<ACCEPTANCE_CONTEXT>"
+# Replace `<SERIAL_NUMBER>` with the verified serial number of the power supply.
+expected_serial_number = "<SERIAL_NUMBER>"
+# Replace the quoted `<COMPLIANCE_VOLTAGE_V>` with the approved numeric voltage, without quotes.
+compliance_voltage_v = "<COMPLIANCE_VOLTAGE_V>"
 control_enabled = false
 allow_remote_access = false
 port = 8000
