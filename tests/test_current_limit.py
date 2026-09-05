@@ -33,7 +33,7 @@ from dispenser_simulator.recording import RecordingAdapter
 
 
 @pytest.mark.parametrize(
-    "bad", [None, True, "0.4", 0, -1, 4.81, 5.0, float("nan"), float("inf")]
+    "bad", [None, True, "0.4", 0, -1, 6.41, 10.0, float("nan"), float("inf")]
 )
 def test_operator_cap_is_strict(bad):
     with pytest.raises(ConfigurationError):
@@ -75,7 +75,7 @@ def test_hardware_reload_no_io_lowering_enforcement_and_invalid_preserves(tmp_pa
     assert device.events == []
     power.set_current(target_current_a=0.2, expected_current_a=0.4)
     assert device.current_setpoint_a == 0.1  # Other settings were NOT reloaded.
-    for content in ("port=8000\n", "max_load_current_A=5.0\n", "broken = ["):
+    for content in ("port=8000\n", "max_load_current_A=6.5\n", "broken = ["):
         layout.mcp_settings_file.write_text(content)
         with pytest.raises(ConfigurationError):
             power.reload_current_limit(layout)
@@ -139,7 +139,7 @@ async def test_local_http_simulator_reload_discovery_and_recording(tmp_path):
                 set_schema = next(
                     t for t in tools if t.name == "set_dispenser_current"
                 ).input_schema
-                assert set_schema["properties"]["target_current_a"]["maximum"] == 4.8
+                assert set_schema["properties"]["target_current_a"]["maximum"] == 6.4
                 bad = await client.call_tool(
                     RELOAD_CURRENT_LIMIT_TOOL, {"max_load_current_A": 4.8}
                 )
@@ -232,3 +232,44 @@ def test_reload_display_result_preserved_in_compact_record():
     assert record["hardware_changed"] is False
     assert record["fresh_state_inspection_recommended"] is True
     assert "payload" not in record
+
+
+@pytest.mark.parametrize("cap,start,target", [(5.0, 4.8, 5.0), (6.4, 6.2, 6.4)])
+def test_raised_cap_respects_spd_range(tmp_path, cap, start, target):
+    from dataclasses import replace
+
+    from test_siglent import configuration
+
+    from dispenser_simulator.model import SimulationError
+
+    assert parse_max_load_current({"max_load_current_A": cap}) == cap
+    device = FakeDevice()
+    device.output_enabled = True
+    device.current_setpoint_a = start / 2
+    power, _ = controller(
+        tmp_path,
+        device,
+        config=replace(configuration(tmp_path), max_load_current_a=cap),
+    )
+    power.set_current(target_current_a=target, expected_current_a=start)
+    assert device.current_setpoint_a == target / 2
+    assert power.read_state().safety_limits.effective_max_load_current_a == cap
+    device.events.clear()
+    with pytest.raises(PowerControlError):
+        power.set_current(target_current_a=6.6, expected_current_a=target)
+    assert device.events == []
+    sim = SimulatedDispenser(
+        HiddenSimulatorConfig(
+            seed="cap-fixture", scenario="nominal_recovery", max_load_current_a=cap
+        ),
+        monotonic=lambda: 0,
+    )
+    sim.state.ch1_output_on = True
+    sim.state.prepared = True
+    sim.state.native_ch1_voltage_setpoint_v = sim.config.compliance_voltage_v
+    sim.state.native_ch1_current_setpoint_a = start / 2
+    sim.set_dispenser_current(target, start)
+    assert sim.state.native_ch1_current_setpoint_a == target / 2
+    with pytest.raises(SimulationError):
+        sim.set_dispenser_current(6.6, target)
+    assert sim.state.native_ch1_current_setpoint_a == target / 2

@@ -11,7 +11,7 @@ allow_remote_access = false
 
 # Backend: "simulation" uses the internal model; "hardware" (default if omitted) uses instruments. No automatic fallback.
 backend = "simulation"
-# Combined commanded-load current cap in A: numeric >0 through 4.8; default 4.8.
+# Combined commanded-load current cap in A: numeric >0 through 6.4; default 4.8.
 # Edit for an operator-approved lower cap. reload_dispenser_current_limit() applies only
 # this field without restart or actuation; include this key explicitly to use reload.
 # Lowering does not reduce an existing output. Inspect state; later targets must be <=cap.

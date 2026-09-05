@@ -9,7 +9,13 @@ from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
-WORKFLOW_ABSOLUTE_CURRENT_CEILING_A = 4.8
+from dispenser_conditioning_mcp.current_policy import (
+    MAX_CONFIGURABLE_LOAD_CURRENT_A,
+    SPD_NATIVE_CURRENT_MAX_A,
+    SPD_PARALLEL_CURRENT_MAX_A,
+)
+
+WORKFLOW_ABSOLUTE_CURRENT_CEILING_A = MAX_CONFIGURABLE_LOAD_CURRENT_A
 NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A = 0.001
 DRIVER_VALIDATION_STATUS = "validated_on_physical_instrument_via_gateway"
 MCP_READ_PATH_VALIDATION_STATUS = (
@@ -298,11 +304,20 @@ class PowerSafetyLimits(BaseModel):
     acceptance_context: PowerAcceptanceContext
     required_enable_confirmation: EnableConfirmation
     fixed_compliance_voltage_v: float = Field(ge=0, le=32)
-    operator_max_load_current_a: float = Field(gt=0, le=6.4)
-    deployment_native_current_ceiling_a: float = Field(ge=2.4, le=2.4)
-    deployment_commanded_load_current_ceiling_a: float = Field(ge=4.8, le=4.8)
-    workflow_absolute_current_ceiling_a: float = Field(ge=4.8, le=4.8)
-    topology_hardware_current_ceiling_a: float = Field(gt=0, le=6.4)
+    operator_max_load_current_a: float = Field(gt=0, le=MAX_CONFIGURABLE_LOAD_CURRENT_A)
+    effective_max_load_current_a: float = Field(gt=0, le=SPD_PARALLEL_CURRENT_MAX_A)
+    deployment_native_current_ceiling_a: float = Field(
+        ge=SPD_NATIVE_CURRENT_MAX_A, le=SPD_NATIVE_CURRENT_MAX_A
+    )
+    deployment_commanded_load_current_ceiling_a: float = Field(
+        ge=SPD_PARALLEL_CURRENT_MAX_A, le=SPD_PARALLEL_CURRENT_MAX_A
+    )
+    workflow_absolute_current_ceiling_a: float = Field(
+        ge=MAX_CONFIGURABLE_LOAD_CURRENT_A, le=MAX_CONFIGURABLE_LOAD_CURRENT_A
+    )
+    topology_hardware_current_ceiling_a: float = Field(
+        gt=0, le=SPD_PARALLEL_CURRENT_MAX_A
+    )
     upward_step_a: float = Field(gt=0, le=0.2)
     native_voltage_resolution_v: float = Field(gt=0)
     native_current_resolution_a: float = Field(gt=0)

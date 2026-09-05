@@ -5,6 +5,10 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from dispenser_conditioning_mcp.current_policy import (
+    SPD_PARALLEL_CURRENT_MAX_A,
+)
+
 from .metadata import NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
 
 READ_ANNOTATIONS = {
@@ -391,6 +395,7 @@ def _power_output_schema() -> dict[str, Any]:
                 "required_enable_confirmation_literal": {"type": "string"},
                 "fixed_compliance_voltage_v": {"type": "number"},
                 "operator_load_current_ceiling_a": {"type": "number"},
+                "effective_load_current_ceiling_a": {"type": "number"},
                 "deployment_load_current_ceiling_a": {"type": "number"},
                 "native_current_ceiling_a": {"type": "number"},
                 "topology_hardware_load_current_ceiling_a": {"type": "number"},
@@ -406,6 +411,7 @@ def _power_output_schema() -> dict[str, Any]:
                 "required_enable_confirmation_literal",
                 "fixed_compliance_voltage_v",
                 "operator_load_current_ceiling_a",
+                "effective_load_current_ceiling_a",
                 "deployment_load_current_ceiling_a",
                 "native_current_ceiling_a",
                 "topology_hardware_load_current_ceiling_a",
@@ -504,12 +510,12 @@ def tool_specs(acceptance_context: str) -> list[dict[str, Any]]:
                     "target_current_a": {
                         "type": "number",
                         "minimum": 0,
-                        "maximum": 4.8,
+                        "maximum": SPD_PARALLEL_CURRENT_MAX_A,
                     },
                     "expected_current_a": {
                         "type": "number",
                         "minimum": 0,
-                        "maximum": 6.4,
+                        "maximum": SPD_PARALLEL_CURRENT_MAX_A,
                     },
                 },
                 "required": ["target_current_a", "expected_current_a"],

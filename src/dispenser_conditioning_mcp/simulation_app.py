@@ -10,6 +10,11 @@ from mcp.server.mcpserver.context import Context
 from mcp.types import CallToolResult, Tool, ToolAnnotations
 
 from dispenser_conditioning_mcp.config import ConfigurationError, SourceLayout
+from dispenser_conditioning_mcp.current_policy import (
+    MAX_CONFIGURABLE_LOAD_CURRENT_A,
+    SPD_PARALLEL_CURRENT_MAX_A,
+    effective_load_current_limit,
+)
 from dispenser_simulator.model import HiddenSimulatorConfig
 from dispenser_simulator.recording import RecordingAdapter, create_recording_service
 from dispenser_simulator.server import build_runtime
@@ -19,7 +24,7 @@ class SimulationMCPServer(MCPServer[None]):
     def __init__(self, adapter: RecordingAdapter) -> None:
         super().__init__(
             "dispenser-conditioning-simulator",
-            instructions=f"Initial operator combined-load current cap: {adapter.router.simulator.config.max_load_current_a:g} A (absolute 4.8 A). reload_dispenser_current_limit reapplies only operator max_load_current_A; readback/reload results give current cap. Synthetic conditioning instruments. Use public observations and submit action context for normal controls; no model-internal state is available through tools.",
+            instructions=f"Initial operator combined-load current cap: {adapter.router.simulator.config.max_load_current_a:g} A (effective {effective_load_current_limit(adapter.router.simulator.config.max_load_current_a):g} A; software maximum {MAX_CONFIGURABLE_LOAD_CURRENT_A:g} A; SPD parallel maximum {SPD_PARALLEL_CURRENT_MAX_A:g} A). reload_dispenser_current_limit reapplies only operator max_load_current_A; readback/reload results give current cap. Synthetic conditioning instruments. Use public observations and submit action context for normal controls; no model-internal state is available through tools.",
         )
         self.adapter = adapter
         self.recording = adapter.service

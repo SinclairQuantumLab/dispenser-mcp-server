@@ -41,15 +41,15 @@ policy value.
 
 | Profile | Native channel | Required live mode | Factor | Instrument capability | Deployment ceiling |
 | --- | --- | --- | --- | --- | --- |
-| `parallel_ch1` | fixed CH1 | `parallel` | 2 | 6.4 A load | 2.4 A native / 4.8 A load |
+| `parallel_ch1` | fixed CH1 | `parallel` | 2 | 6.4 A load | 3.2 A native / 6.4 A load |
 
 No other topology or native channel is accepted at startup. The server never
 writes a tracking-mode command. Native CH1 current setpoint = requested
 load-current limit / 2. This deployment adds a
-2.4 A native/4.8 A load-current ceiling, so accepted targets are bounded by:
+3.2 A native/6.4 A load-current ceiling, so accepted targets are bounded by:
 
 ```text
-min(topology hardware ceiling, fixed deployment/workflow ceiling of 4.8 A)
+min(topology hardware ceiling, fixed deployment/software maximum of 6.4 A, operator cap)
 ```
 
 Only commanded current is topology-scaled. Native CH1 current, voltage, and
@@ -159,7 +159,7 @@ Input:
 {
   "type": "object",
   "properties": {
-    "target_current_a": {"type": "number", "minimum": 0, "maximum": 4.8},
+    "target_current_a": {"type": "number", "minimum": 0, "maximum": 6.4},
     "expected_current_a": {"type": "number", "minimum": 0, "maximum": 6.4}
   },
   "required": ["target_current_a", "expected_current_a"],

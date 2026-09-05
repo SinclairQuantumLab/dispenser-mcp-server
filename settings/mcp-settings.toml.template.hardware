@@ -20,7 +20,7 @@ acceptance_context = "<ACCEPTANCE_CONTEXT>"
 # Required PSU identity: exact verified serial, nonempty string, at most 128 characters.
 # Change only when deliberately binding a different supply.
 expected_serial_number = "<SERIAL_NUMBER>"
-# Combined commanded-load current cap in A: numeric >0 through 4.8; default 4.8.
+# Combined commanded-load current cap in A: numeric >0 through 6.4; default 4.8.
 # Edit for an operator-approved lower cap. reload_dispenser_current_limit() applies only
 # this field without restart or actuation; include this key explicitly to use reload.
 # Lowering does not reduce an existing output. Inspect state; later targets must be <=cap.

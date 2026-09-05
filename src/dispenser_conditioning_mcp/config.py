@@ -11,14 +11,19 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal, cast
 
+from dispenser_conditioning_mcp.current_policy import (
+    MAX_CONFIGURABLE_LOAD_CURRENT_A,
+    SPD_NATIVE_CURRENT_MAX_A,
+    SPD_PARALLEL_CURRENT_MAX_A,
+)
 from dispenser_conditioning_mcp.power_domain import PowerAcceptanceContext
 
 DEFAULT_OPC_UA_PORT = 4840
 DEFAULT_TIMEOUT_S = 5.0
 DEFAULT_SIGLENT_TIMEOUT_S = 5.0
 DEFAULT_SIGLENT_COMMAND_INTERVAL_MS = 100.0
-PARALLEL_NATIVE_CURRENT_CEILING_A = 2.4
-PARALLEL_LOAD_CURRENT_CEILING_A = 4.8
+PARALLEL_NATIVE_CURRENT_CEILING_A = SPD_NATIVE_CURRENT_MAX_A
+PARALLEL_LOAD_CURRENT_CEILING_A = SPD_PARALLEL_CURRENT_MAX_A
 PARALLEL_LOAD_UPWARD_STEP_A = 0.2
 FIXED_SIGLENT_CONNECTION = "gateway"
 FIXED_SIGLENT_TOPOLOGY = "parallel_ch1"
@@ -439,10 +444,10 @@ def parse_max_load_current(
         not isinstance(value, (int, float))
         or isinstance(value, bool)
         or not math.isfinite(value)
-        or not 0 < value <= 4.8
+        or not 0 < value <= MAX_CONFIGURABLE_LOAD_CURRENT_A
     ):
         raise ConfigurationError(
-            "max_load_current_A must be a finite number greater than 0 and at most 4.8 A"
+            f"max_load_current_A must be a finite number greater than 0 and at most {MAX_CONFIGURABLE_LOAD_CURRENT_A:g} A"
         )
     return float(value)
 

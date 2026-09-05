@@ -182,9 +182,10 @@ def _power_state(
             required_enable_confirmation=confirmation,
             fixed_compliance_voltage_v=10.0,
             operator_max_load_current_a=4.8,
-            deployment_native_current_ceiling_a=2.4,
-            deployment_commanded_load_current_ceiling_a=4.8,
-            workflow_absolute_current_ceiling_a=4.8,
+            effective_max_load_current_a=4.8,
+            deployment_native_current_ceiling_a=3.2,
+            deployment_commanded_load_current_ceiling_a=6.4,
+            workflow_absolute_current_ceiling_a=6.4,
             topology_hardware_current_ceiling_a=6.4,
             upward_step_a=0.2,
             native_voltage_resolution_v=0.001,
@@ -260,7 +261,7 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
         "expected_current_a",
         "action_context",
     }
-    assert set_schema["properties"]["target_current_a"]["maximum"] == 4.8
+    assert set_schema["properties"]["target_current_a"]["maximum"] == 6.4
     enable_schema = by_name["enable_dispenser_output"].input_schema
     assert set(enable_schema["required"]) == {
         "parallel_connection_confirmation",

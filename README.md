@@ -129,7 +129,7 @@ loopback, authenticated dashboard and terminal inaccessible to the remote agent.
 New HTTP simulation defaults are synthetic `production_dispenser`,
 `control_enabled = true`, `compliance_voltage_v = 1.0` V. The voltage is a
 simulation-only test value, **not approved for live equipment**. Existing model
-limits remain 4.8 A load ceiling and 0.2 A upward steps. Simulation reads and
+limits remain 6.4 A device ceiling and 0.2 A upward steps. Simulation reads and
 prepare/enable/set accept optional `elapsed_s` (0..86400 seconds, default 0).
 Each physical interaction irreversibly advances by the greater of that request
 and actual monotonic wall time since the previous interaction. The first call
@@ -215,7 +215,7 @@ expected-to-target transition is valid.
 ## Deterministic power boundary
 
 Startup accepts exactly one deployment profile: `parallel_ch1` on `CH1`, with
-load-current factor 2, a 2.4 A native ceiling, a 4.8 A configured load-current
+load-current factor 2, a 3.2 A native ceiling, a 6.4 A maximum configurable load-current
 ceiling, and 6.4 A hardware capability. Startup also binds one explicit
 acceptance context: `production_dispenser` or `no_load_test`. The active context
 and its required enable confirmation are returned in structured safety limits.
@@ -227,7 +227,7 @@ by two before the native CH1 current setpoint is written. The returned
 measured load current**. Only the native CH1 current measurement is returned;
 parallel load-current measurement semantics remain hardware-unverified.
 
-Every target is bounded by the fixed 4.8 A deployment/workflow ceiling and the
+Every target is bounded by the operator cap, software maximum 6.4 A and the
 topology hardware ceiling. Under `parallel_ch1`, every
 positive increase must equal 0.2 A of commanded load current, which maps to a
 0.1 A native CH1 step. Decreases are allowed. Live voltage must still match the
@@ -330,7 +330,7 @@ gateway identifier have no implicit deployment value and must be filled in.
 
 The following deployment contract is fixed in code and cannot be weakened in a
 settings file: authenticated gateway connection, `parallel_ch1`, `CH1`, model
-`SPD3303X`, native ceiling 2.4 A, commanded-load ceiling 4.8 A, factor 2, and
+`SPD3303X`, native ceiling 3.2 A, commanded-load ceiling 6.4 A, factor 2, and
 exact 0.2 A commanded-load upward step. The HiCube client, Siglent driver source,
 settings directory, and authentication path are derived from the source
 checkout. No MCP tool or normal operator setting accepts any of those paths.
@@ -369,7 +369,7 @@ are rejected rather than silently ignored.
 For a supply with no dispenser or unapproved load connected, an operator may
 approve a low 1.0 V fixed compliance voltage for the first acceptance run.
 Operator-approved metrology wiring may be present. The immutable ceilings remain
-2.4 A native and 4.8 A commanded load current; the agent must still execute only
+3.2 A native and 6.4 A commanded load current; the agent must still execute only
 the reviewed first exact 0.2 A load-current step in this acceptance sequence.
 
 1. Keep outputs off and set parallel tracking mode through an operator-controlled
@@ -513,9 +513,9 @@ count, not individual string bytes; the browser still retains all loaded points.
 
 Top-level `max_load_current_A = 4.8` (capital A) sets the combined **commanded**
 load-current ceiling for hardware and HTTP simulation. Valid values are finite
-numbers greater than zero and no greater than 4.8 A; omission defaults to 4.8 at
-startup. It is not a measured parallel-current value. The fixed absolute 4.8 A /
-native 2.4 A policy and exact 0.2 A upward step remain unchanged.
+numbers greater than zero and no greater than 6.4 A; omission defaults to 4.8 at
+startup. It is not a measured parallel-current value. The software maximum 6.4 A /
+native 3.2 A / parallel 6.4 A device bounds are separate constraints; the exact 0.2 A upward step remains unchanged.
 
 After the operator edits this key, the agent may call
 `reload_dispenser_current_limit()` with **no arguments**. The server reads only
@@ -528,11 +528,11 @@ The result gives previous/applied/effective caps, explicitly reports hardware
 unchanged, and recommends fresh state inspection after lowering. An already
 energized output is neither clamped nor turned off; it may remain above the new
 cap. Subsequent targets must be <=cap, including decreases; shutdown remains
-available. Enable still requires prepared zero current. Raising within 4.8 A is
-allowed only through the operator file. 5.0 A is not allowed.
+available. Enable still requires prepared zero current. Raising within 6.4 A is
+allowed only through the operator file; 5.0 A is valid when the applied cap permits it.
 
 Initialize instructions advertise the initial cap. State/reload results report
-the applied cap; cached input schemas retain the absolute 4.8 A ceiling so a later
+the applied cap; cached input schemas retain the absolute device ceiling of 6.4 A so a later
 valid increase is not rejected by a stale discovery limit. All calls are recorded
 through the ordinary session logger. The standalone injected simulator without
 an operator settings layout advertises reload but reports it unavailable.

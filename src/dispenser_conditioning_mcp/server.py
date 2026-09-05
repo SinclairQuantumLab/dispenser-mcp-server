@@ -16,6 +16,11 @@ from dispenser_conditioning_mcp.current_limit import (
     RELOAD_CURRENT_LIMIT_TOOL,
     CurrentLimitReloadResult,
 )
+from dispenser_conditioning_mcp.current_policy import (
+    MAX_CONFIGURABLE_LOAD_CURRENT_A,
+    SPD_PARALLEL_CURRENT_MAX_A,
+    effective_load_current_limit,
+)
 from dispenser_conditioning_mcp.domain import (
     PressureObservationError,
     PressureObservationSource,
@@ -157,7 +162,7 @@ def create_server(
     server = DispenserConditioningMCPServer(
         "Dispenser Conditioning",
         instructions=_server_instructions(acceptance_context)
-        + f" Initial operator combined-load current cap: {initial_max_load_current_A:g} A (absolute ceiling 4.8 A). Operator may edit max_load_current_A and reload_dispenser_current_limit applies only that field. Cached schemas retain absolute bounds; state/reload results report the current cap.",
+        + f" Initial operator combined-load current cap: {initial_max_load_current_A:g} A (effective {effective_load_current_limit(initial_max_load_current_A):g} A; software maximum {MAX_CONFIGURABLE_LOAD_CURRENT_A:g} A; SPD parallel maximum {SPD_PARALLEL_CURRENT_MAX_A:g} A). Operator may edit max_load_current_A and reload_dispenser_current_limit applies only that field. Cached schemas retain absolute bounds; state/reload results report the current cap.",
         tool_arguments=tool_arguments,
         recording=recording or RecordingService(),
     )
@@ -251,7 +256,7 @@ def create_server(
             float,
             Field(
                 ge=0,
-                le=4.8,
+                le=SPD_PARALLEL_CURRENT_MAX_A,
                 description=(
                     "Absolute commanded load-current limit in amperes; never a "
                     "measured load current."
@@ -263,7 +268,7 @@ def create_server(
             float,
             Field(
                 ge=0,
-                le=6.4,
+                le=SPD_PARALLEL_CURRENT_MAX_A,
                 description=(
                     "Last observed commanded load-current limit for compare-and-set."
                 ),

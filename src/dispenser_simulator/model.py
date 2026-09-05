@@ -16,6 +16,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
+from dispenser_conditioning_mcp.current_policy import (
+    MAX_CONFIGURABLE_LOAD_CURRENT_A,
+    SPD_NATIVE_CURRENT_MAX_A,
+    SPD_PARALLEL_CURRENT_MAX_A,
+    effective_load_current_limit,
+)
+
 from .metadata import NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
 from .observer import Observer
 
@@ -100,8 +107,13 @@ class HiddenSimulatorConfig:
             raise ValueError("Unsupported acceptance context")
         if not (0.0 < self.compliance_voltage_v <= 32.0):
             raise ValueError("Compliance voltage must be in (0, 32]")
-        if not (0.0 < self.max_load_current_a <= 4.8):
-            raise ValueError("Maximum load-current limit must be in (0, 4.8]")
+        if not (
+            math.isfinite(self.max_load_current_a)
+            and 0.0 < self.max_load_current_a <= MAX_CONFIGURABLE_LOAD_CURRENT_A
+        ):
+            raise ValueError(
+                f"Maximum load-current limit must be in (0, {MAX_CONFIGURABLE_LOAD_CURRENT_A:g}]"
+            )
         if not math.isclose(self.upward_step_a, 0.2, abs_tol=EPSILON):
             raise ValueError("parallel_ch1 upward step must be exactly 0.2 A")
 
@@ -636,9 +648,12 @@ class SimulatedDispenser:
                 "required_enable_confirmation_literal": self.confirmation_literal,
                 "fixed_compliance_voltage_v": self.config.compliance_voltage_v,
                 "operator_load_current_ceiling_a": self.config.max_load_current_a,
-                "deployment_load_current_ceiling_a": 4.8,
-                "native_current_ceiling_a": 2.4,
-                "topology_hardware_load_current_ceiling_a": 6.4,
+                "deployment_load_current_ceiling_a": SPD_PARALLEL_CURRENT_MAX_A,
+                "effective_load_current_ceiling_a": effective_load_current_limit(
+                    self.config.max_load_current_a
+                ),
+                "native_current_ceiling_a": SPD_NATIVE_CURRENT_MAX_A,
+                "topology_hardware_load_current_ceiling_a": SPD_PARALLEL_CURRENT_MAX_A,
                 "exact_upward_load_current_step_a": 0.2,
                 "no_load_test_safe_measured_current_abs_a": (
                     NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
@@ -743,11 +758,14 @@ class SimulatedDispenser:
                 raise SimulationError(f"{label} must be a finite number.")
             if not math.isfinite(float(value)):
                 raise SimulationError(f"{label} must be a finite number.")
-            if not (0.0 <= float(value) <= 6.4):
+            if not (0.0 <= float(value) <= SPD_PARALLEL_CURRENT_MAX_A):
                 raise SimulationError(f"{label} is outside the topology range.")
         target = float(target_current_a)
         expected = float(expected_current_a)
-        if target > min(self.config.max_load_current_a, 4.8) + EPSILON:
+        if (
+            target
+            > effective_load_current_limit(self.config.max_load_current_a) + EPSILON
+        ):
             raise SimulationError("Target exceeds the fixed load-current ceiling.")
         native_target = target / 2.0
         native_expected = expected / 2.0

@@ -26,6 +26,10 @@ from dispenser_conditioning_mcp.current_limit import (
     CurrentLimitReloadResult,
     reload_result,
 )
+from dispenser_conditioning_mcp.current_policy import (
+    SPD_NATIVE_CURRENT_MAX_A,
+    effective_load_current_limit,
+)
 from dispenser_conditioning_mcp.power_domain import (
     DRIVER_VALIDATION_STATUS,
     MCP_READ_PATH_VALIDATION_STATUS,
@@ -550,7 +554,9 @@ class DispenserPowerController:
 
     def _validated_native_target(self, value: float, *, enforce_ceiling: bool) -> float:
         rendered = float(value)
-        hardware_ceiling = 3.2 * self._configuration.load_current_factor
+        hardware_ceiling = (
+            SPD_NATIVE_CURRENT_MAX_A * self._configuration.load_current_factor
+        )
         if not math.isfinite(rendered) or rendered < 0 or rendered > hardware_ceiling:
             raise PowerControlError(
                 "Current value is outside the configured topology hardware range."
@@ -770,6 +776,9 @@ class DispenserPowerController:
                 ),
                 fixed_compliance_voltage_v=(self._configuration.compliance_voltage_v),
                 operator_max_load_current_a=(self._configuration.max_load_current_a),
+                effective_max_load_current_a=effective_load_current_limit(
+                    self._configuration.max_load_current_a
+                ),
                 deployment_native_current_ceiling_a=(PARALLEL_NATIVE_CURRENT_CEILING_A),
                 deployment_commanded_load_current_ceiling_a=(
                     PARALLEL_LOAD_CURRENT_CEILING_A
@@ -777,7 +786,8 @@ class DispenserPowerController:
                 workflow_absolute_current_ceiling_a=(
                     WORKFLOW_ABSOLUTE_CURRENT_CEILING_A
                 ),
-                topology_hardware_current_ceiling_a=3.2 * load_factor,
+                topology_hardware_current_ceiling_a=SPD_NATIVE_CURRENT_MAX_A
+                * load_factor,
                 upward_step_a=self._configuration.upward_step_a,
                 native_voltage_resolution_v=self._native_voltage_resolution,
                 native_current_resolution_a=self._native_current_resolution,
