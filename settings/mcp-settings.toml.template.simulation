@@ -1,18 +1,26 @@
 # Copy to mcp-settings.toml for an internal simulation; no live instrument settings/auth are needed.
+# Operator settings: startup-only except explicit max_load_current_A reload from this file.
 # This is a disclosed connectivity example, not a hidden scientific evaluation scenario.
-# Backend is "simulation" here; "hardware" selects actual instruments (default if omitted). No fallback.
-backend = "simulation"
-# Strict true/false, default false: loopback only; true listens on all IPv4 interfaces for remote clients.
-allow_remote_access = false
-# Integer TCP port 1024..65535, default 8000; change for a port conflict. MCP /mcp and dashboard share it.
+
+# Both backends: integer TCP port 1024..65535, default 8000; change only for a port conflict/deployment need.
+# MCP is always /mcp; the human dashboard shares this port and has separate operator login.
 port = 8000
+# Both backends: strict true/false, default false binds 127.0.0.1; true binds 0.0.0.0.
+# Set true for clients on another computer. This does not enable hardware control.
+allow_remote_access = false
+
+# Backend: "simulation" uses the internal model; "hardware" (default if omitted) uses instruments. No automatic fallback.
+backend = "simulation"
 # Combined commanded-load current cap in A: numeric >0 through 4.8; default 4.8.
 # Edit for an operator-approved lower cap. reload_dispenser_current_limit() applies only
 # this field without restart or actuation; include this key explicitly to use reload.
 # Lowering does not reduce an existing output. Inspect state; later targets must be <=cap.
 max_load_current_A = 4.8
 
+# Simulation-only settings below; the reloadable max_load_current_A stays above this table.
 [simulation]
+# Simulation mutations: strict true/false, default true. Set false to test read-only operation.
+control_enabled = true
 # Required nonempty reproducibility seed string, no HTTP default. Operator chooses it before the process starts.
 # Keep seed/scenario private from an agent in a blind simulation.
 seed = "operator-connectivity-example"
@@ -23,8 +31,6 @@ seed = "operator-connectivity-example"
 # hil_current_negative_boundary, hil_measurement_unavailable, hil_measurement_nonfinite.
 # Choose an operator test case; these names select model behavior, not a conditioning decision policy.
 scenario = "nominal_recovery"
-# Simulation mutations: strict true/false, default true. Set false to test read-only operation.
-control_enabled = true
 # Simulation fixed compliance in numeric volts: >0 through 32, HTTP default 1.0.
 # This synthetic test value is NOT an approved live voltage; no real equipment is contacted.
 compliance_voltage_v = 1.0

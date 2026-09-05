@@ -1,5 +1,6 @@
 # Copy to mcp-settings.toml; replace placeholders before starting with uv run dispenser-conditioning-mcp.
-# Operator startup settings only; tools cannot change these. For simulation use mcp-settings.toml.template.simulation.
+# Operator settings: startup-only except explicit max_load_current_A reload from this file.
+# For simulation use mcp-settings.toml.template.simulation.
 
 # Both backends: integer TCP port 1024..65535, default 8000; change only for a port conflict/deployment need.
 # MCP is always /mcp; the human dashboard shares this port and has separate operator login.
@@ -10,9 +11,11 @@ allow_remote_access = false
 
 # Backend: "hardware" (default) uses instruments; "simulation" uses the internal model. No automatic fallback.
 backend = "hardware"
+# Hardware power mutations: strict true/false, default false. Enable only for an approved controlled session.
+# Read tools remain available when false; all physical safety checks still apply when true.
+control_enabled = false
 # Required for hardware: "production_dispenser" for approved dispenser wiring,
 # or "no_load_test" for a physically verified unloaded supply and process-local current stop.
-control_enabled = false
 acceptance_context = "<ACCEPTANCE_CONTEXT>"
 # Required PSU identity: exact verified serial, nonempty string, at most 128 characters.
 # Change only when deliberately binding a different supply.
@@ -23,7 +26,5 @@ expected_serial_number = "<SERIAL_NUMBER>"
 # Lowering does not reduce an existing output. Inspect state; later targets must be <=cap.
 max_load_current_A = 4.8
 # Required hardware fixed compliance voltage: numeric volts, 0 through 32, resolution 0.001 V.
-# Replace the quoted placeholder with an operator-approved number WITHOUT quotes; never infer a safe live voltage.
+# Use the operator-approved voltage for this setup; never infer approval for a different live setup.
 compliance_voltage_v = 1.2
-# Hardware power mutations: strict true/false, default false. Enable only for an approved controlled session.
-# Read tools remain available when false; all physical safety checks still apply when true.
