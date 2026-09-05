@@ -441,7 +441,11 @@ def _required_text(raw_value: object, *, name: str, maximum_length: int) -> str:
 
 
 def _is_placeholder(value: object) -> bool:
-    return isinstance(value, str) and "replace-with-" in value.lower()
+    return (
+        isinstance(value, str)
+        and value.strip().startswith("<")
+        and value.strip().endswith(">")
+    )
 
 
 def _choice(raw_value: object, *, name: str, choices: tuple[str, ...]) -> str:

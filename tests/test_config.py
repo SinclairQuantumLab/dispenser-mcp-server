@@ -137,12 +137,12 @@ def test_each_toml_document_rejects_unknown_keys(
     [
         (
             'expected_serial_number = "SPD-OFFLINE"',
-            'expected_serial_number = "replace-with-serial"',
+            'expected_serial_number = "<SERIAL_NUMBER>"',
             "placeholder",
         ),
         (
             "compliance_voltage_v = 10.0",
-            'compliance_voltage_v = "replace-with-voltage"',
+            'compliance_voltage_v = "<COMPLIANCE_VOLTAGE_V>"',
             "placeholder",
         ),
         (
@@ -171,13 +171,13 @@ def test_main_settings_reject_placeholders_and_wrong_types(
         (
             "hicube",
             'host = "192.0.2.10"',
-            'host = "replace-with-hicube-host"',
+            'host = "<HOST>"',
             "placeholder",
         ),
         (
             "gateway",
             'identifier = "offline.test:8765"',
-            'identifier = "replace-with-gateway-identifier"',
+            'identifier = "<IDENTIFIER>"',
             "placeholder",
         ),
         ("hicube", "port = 4841", 'port = "4841"', "integer"),
