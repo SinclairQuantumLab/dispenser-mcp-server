@@ -110,6 +110,7 @@ class RecordingService:
     def __init__(
         self, recorder: SessionRecorder | None = None, *, directory: Path | None = None
     ) -> None:
+        self.completion_recorded = False
         self.directory = directory or new_run_directory("live")
         self.session_id = str(uuid4())
         self.recorder = recorder
@@ -291,6 +292,15 @@ class RecordingService:
                     "execution": execution,
                 },
             )
+            if (
+                name == DECLARATION_TOOL
+                and completion is not None
+                and not result.is_error
+                and record is not None
+                and not warnings
+            ):
+                # One-way disclosure marker, not an actuation or recorder lifecycle gate.
+                self.completion_recorded = True
             observation_id = None
             state = content_state(result.model_dump(mode="json", by_alias=True))
             if (

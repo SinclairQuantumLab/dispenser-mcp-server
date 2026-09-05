@@ -232,7 +232,7 @@ The saved-recording preview uses the identical guard and local operator flow.
 `backend = "simulation"` selects the canonical in-checkout Python simulator before
 hardware settings or adapters are loaded. The same HTTP process and access guard
 serve `/mcp` and the dashboard. The direct backend delegates once to the existing
-eight-tool RecordingAdapter: no proxy port, duplicate recorder or second IDs.
+instrument RecordingAdapter: no proxy port, duplicate recorder or second IDs.
 `[simulation]` requires operator seed/scenario, and optionally accepts strict
 control_enabled (default true) and compliance_voltage_v (default1.0 V, synthetic
 test setting only). No hidden scenario/seed is returned by MCP. Hardware backend is the
@@ -266,8 +266,8 @@ Raw events preserve the context; decisions.csv adds token_usage_id, total_tokens
 input_tokens, output_tokens, cached_input_tokens and token_model. CSV includes
 repeated IDs; offline totals must deduplicate within each run. Dashboard totals
 use the first report for each ID and visibly flag conflicting later values,
-without changing execution. Plots use the first corresponding record number,
-not a fabricated model observation timestamp. Reported coverage is explicit.
+without changing execution. Plots use the existing time coordinate of the first corresponding record,
+with usage ID and record number in hover; unknown time coordinates stay missing. Reported coverage is explicit.
 
 Dashboard API responses are read-only projections, not the canonical record.
 `/api/session?after=<cursor>&generation=<generation>` returns metadata and at most
@@ -284,3 +284,21 @@ a decision. It reads only operator `max_load_current_A`, does not actuate or
 advance simulation time, and returns previous_max_load_current_A,
 applied_max_load_current_A, effective_max_load_current_A, hardware_changed=false,
 fresh_state_inspection_recommended, and notice. No observation ID is created.
+
+### Read-only history and human run management
+Three history tools bypass recording and instrument dispatch: paged run list
+(maximum 100), compact event pages (maximum 200), optional original public event
+lookup (maximum 64 KiB), and saved-simulation hindsight pages. Current-process
+internal state unlocks only after a validated non-null completion's final result
+is successfully recorded without recording warnings. All completion outcomes
+qualify. The disclosure marker never resets; later calls do not restore blindness.
+Non-current saved/interrupted runs are reviewable under the single-server convention;
+inactivity never unlocks a running session. No actuation/lifecycle gate is added.
+Existing event IDs/clocks are retained.
+Dashboard POST rename/archive/restore/delete routes require dashboard access;
+archive/delete reject the current process run, deletion also requires archived
+state and exact basename confirmation. Labels/archive flags are separate
+run-management.json metadata, not edits to canonical experiment records.
+All dashboard charts share X clock/range/mode; numerical Auto-Y controls are
+per panel and fit visible-time points only. New observer rows include actual UTC
+recorded_at, distinct from synthetic observed_at; absent recorded_at is not reconstructed.

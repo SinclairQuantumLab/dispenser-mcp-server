@@ -1,11 +1,29 @@
 """File-only human observer association and incremental reading checks."""
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from dispenser_conditioning_mcp.simulation_observer import SimulationObserverReader
+
+
+def test_observer_records_actual_wall_time_separate_from_virtual_timestamp(tmp_path):
+    from dispenser_simulator.observer import Observer
+    directory = session(tmp_path)
+    path = directory / "observer.jsonl"
+    before = datetime.now(UTC)
+    observer = Observer(str(path))
+    observer.append(row())
+    stored = json.loads(path.read_text())
+    assert before <= datetime.fromisoformat(stored["recorded_at"]) <= datetime.now(UTC)
+    assert stored["observed_at"] == "2040-01-01T00:00:00Z"
+    reader = SimulationObserverReader(directory)
+    projected = reader.snapshot()
+    assert projected["rows"][0]["recorded_at"] == stored["recorded_at"]
+    append(path, {**row(1), "recorded_at": "2026-09-05T12:00:00"})
+    assert reader.snapshot()["errors"] == 1
 
 
 def session(tmp_path: Path, kind="simulated") -> Path:

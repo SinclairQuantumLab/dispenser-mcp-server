@@ -23,82 +23,114 @@ function elapsedAxis(values, range) {
   return {tickmode:"array", tickvals, ticktext:tickvals.map(v => elapsedLabel(v, hours, showSeconds, fractional)),
     title:{text:"Virtual elapsed · " + (hours ? (showSeconds ? (fractional ? "HH:MM:SS.sss" : "HH:MM:SS") : "HH:MM") + " (hours may exceed 24)" : (fractional ? "MM:SS.sss" : "MM:SS"))}};
 }
-const timeViews = {
-  chart: {mode:"full", range:null, width:null, busy:0, queue:Promise.resolve(), wall:false},
-  "truth-chart": {mode:"full", range:null, width:null, busy:0, queue:Promise.resolve(), wall:false}
-};
+const sharedView = {mode:"full",range:null,width:null,wall:false};
+const chartStates = Object.fromEntries(["chart","truth-chart","token-chart"].map(id=>[id,{busy:0,queue:Promise.resolve()}]));
+const autoY = {chart:[true,true,true,false],"truth-chart":[false,true,true],"token-chart":[true,true]};
+const gridStyle = {showgrid:true,gridcolor:"#40556b",showline:true,linecolor:"#6c8197",linewidth:1,mirror:true,zeroline:false};
+let redrawQueue=Promise.resolve();
 function timeNumber(value, wall) {
-  if (typeof value === "number") return value;
-  if (!wall) return Number(value);
-  const text = String(value).replace(" ", "T");
-  return Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(text) ? text : text+"Z");
+  if(value===null || value===undefined) return NaN;
+  if(typeof value==="number") return value;
+  if(!wall) return Number(value);
+  const rendered=String(value).replace(" ","T");
+  return Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(rendered)?rendered:rendered+"Z");
+}
+function modelX(row) {return sharedView.wall ? (row.recorded_at || null) : num(row.virtual_time_s)===null ? null : row.virtual_time_s/60;}
+function knownTimes() {
+  return [...events.map(xFor),...(metadata.session_kind==="simulated"?truthRows.map(modelX):[])].filter(v=>v!==null);
 }
 function timeRange(state, values) {
-  const points = values.map(v=>timeNumber(v,state.wall)).filter(Number.isFinite);
-  const latest = points.length ? points.reduce((a,b)=>Math.max(a,b)) : (state.range?.[1] ?? 0);
-  const earliest = points.length ? points.reduce((a,b)=>Math.min(a,b)) : latest;
-  const fallback = state.wall ? 60000 : 1;
-  if (state.mode === "full") state.range = latest > earliest ? [earliest,latest] : [latest-fallback/2,latest+fallback/2];
-  else if (state.mode === "rolling") {
-    state.width = state.width > 0 ? state.width : fallback;
-    state.range = [latest-state.width,latest];
-  } else if (!state.range) state.range = [latest-fallback/2,latest+fallback/2];
+  const points=values.map(v=>timeNumber(v,state.wall)).filter(Number.isFinite);
+  const latest=points.length?points.reduce((a,b)=>Math.max(a,b)):(state.range?.[1]??0);
+  const earliest=points.length?points.reduce((a,b)=>Math.min(a,b)):latest;
+  const fallback=state.wall?60000:1;
+  if(state.mode==="full") state.range=latest>earliest?[earliest,latest]:[latest-fallback/2,latest+fallback/2];
+  else if(state.mode==="rolling") {state.width=state.width>0?state.width:fallback;state.range=[latest-state.width,latest];}
+  else if(!state.range) state.range=[latest-fallback/2,latest+fallback/2];
   return state.range;
 }
 function viewIds(id) {
-  return id === "chart" ? ["time-view","time-width",4] : ["truth-time-view","truth-time-width",3];
+  return id==="chart"?["time-view","time-width",4]:id==="truth-chart"?["truth-time-view","truth-time-width",3]:["token-time-view","token-time-width",2];
 }
-function updateWidth(id) {
-  const state=timeViews[id], [,widthId]=viewIds(id);
-  const width=state.range ? state.range[1]-state.range[0] : (state.width || (state.wall?60000:1));
-  el(widthId).textContent="Visible width: "+(width/(state.wall?1000:1/60)).toFixed(3)+" s";
+function updateWidth() {
+  const width=sharedView.range?sharedView.range[1]-sharedView.range[0]:(sharedView.width||(sharedView.wall?60000:1));
+  for(const id of Object.keys(chartStates)) {
+    const [select,widthId]=viewIds(id);el(select).value=sharedView.mode;
+    el(widthId).textContent="Shared visible width: "+(width/(sharedView.wall?1000:1/60)).toFixed(3)+" s";
+  }
 }
 function captureRange(id) {
-  const state=timeViews[id], raw=el(id).layout?.xaxis?.range;
-  if (raw?.length === 2) {
-    const range=raw.map(v=>timeNumber(v,state.wall));
-    if (range.every(Number.isFinite) && range[1]>range[0]) {state.range=range;state.width=range[1]-range[0];}
+  const raw=el(id).layout?.xaxis?.range;
+  if(raw?.length===2) {
+    const range=raw.map(v=>timeNumber(v,sharedView.wall));
+    if(range.every(Number.isFinite)&&range[1]>range[0]) {sharedView.range=range;sharedView.width=range[1]-range[0];}
   }
 }
-function resetTimeView(id) {
-  const state=timeViews[id];
-  state.mode="full";state.range=null;state.width=null;
-  el(viewIds(id)[0]).value="full";
-}
-function guardedPlot(id, operation) {
-  const state=timeViews[id];
+function resetTimeView() {sharedView.mode="full";sharedView.range=null;sharedView.width=null;updateWidth();}
+function guardedPlot(id,operation) {
+  const state=chartStates[id];
   const next=state.queue.then(async()=>{state.busy++;try{return await operation();}finally{state.busy--;}});
-  state.queue=next.catch(()=>{});
-  return next;
+  state.queue=next.catch(()=>{});return next;
 }
-function viewLayout(id, layout, values) {
-  const state=timeViews[id], range=timeRange(state,values), count=viewIds(id)[2];
-  const rendered=state.wall ? range.map(v=>new Date(v).toISOString()) : range;
-  const ticks=state.wall ? {} : elapsedAxis(values,range);
+function viewLayout(id,layout) {
+  sharedView.wall=el("clock").value==="wall";
+  const values=knownTimes(),range=timeRange(sharedView,values),count=viewIds(id)[2];
+  const rendered=sharedView.wall?range.map(v=>new Date(v).toISOString()):range;
+  const ticks=sharedView.wall?{tickmode:"auto",tickvals:null,ticktext:null,title:{text:"Recorded wall time · UTC"}}:elapsedAxis(values,range);
   for(let i=1;i<=count;i++) {
     const key=i===1?"xaxis":"xaxis"+i;
-    Object.assign(layout[key],ticks,{range:rendered,autorange:false});
+    Object.assign(layout[key],gridStyle,ticks,{type:sharedView.wall?"date":"linear",range:rendered,autorange:false});
     if(i<count) layout[key].title=null;
   }
-  updateWidth(id);
+  updateWidth();
 }
-function watchTimeView(id, values) {
-  const graph=el(id), state=timeViews[id], [selectId,,count]=viewIds(id);
-  graph.removeAllListeners("plotly_relayout");
-  graph.on("plotly_relayout", change=>{
-    if(state.busy || !Object.keys(change).some(k=>/^xaxis[0-9]*\.(range|autorange)/.test(k))) return;
-    captureRange(id);
-    if(state.mode==="full") {state.mode="fixed";el(selectId).value="fixed";}
-    updateWidth(id);
-    if(state.wall) return;
-    const ticks=elapsedAxis(values,state.range), update={};
-    for(let i=1;i<=count;i++) {
-      const axis=i===1?"xaxis":"xaxis"+i;
-      for(const key of ["tickmode","tickvals","ticktext"]) update[axis+"."+key]=ticks[key];
-      if(i===count) update[axis+".title"]=ticks.title;
+function visibleExtent(traces,panel,range,wall,log) {
+  const values=[];
+  for(const trace of traces) {
+    if(trace.visible===false||trace.visible==="legendonly"||(trace.yaxis||"y")!==(panel===1?"y":"y"+panel)) continue;
+    for(let i=0;i<trace.x.length;i++) {
+      const x=timeNumber(trace.x[i],wall),y=num(trace.y[i]);
+      if(x>=range[0]&&x<=range[1]&&y!==null&&(!log||y>0)) values.push(log?Math.log10(y):y);
     }
-    guardedPlot(id,()=>Plotly.relayout(graph,update)).catch(showViewError);
+  }
+  if(!values.length) return null;
+  const low=values.reduce((a,b)=>Math.min(a,b)),high=values.reduce((a,b)=>Math.max(a,b));
+  const pad=high>low?(high-low)*.08:log?.1:Math.max(Math.abs(low)*.08,.01);
+  return [low-pad,high+pad];
+}
+function applyY(id,layout,traces) {
+  const graph=el(id);
+  // Retain hidden traces while reacting to incoming records.
+  for(const trace of traces) {
+    const old=graph.data?.find(t=>t.name===trace.name);
+    if(old?.visible!==undefined) trace.visible=old.visible;
+  }
+  for(let panel=1;panel<=viewIds(id)[2];panel++) {
+    const key=panel===1?"yaxis":"yaxis"+panel,axis=layout[key];
+    Object.assign(axis,gridStyle);
+    if(id==="chart"&&panel===4) continue;
+    const old=graph.layout?.[key]?.range;
+    const range=autoY[id][panel-1]?visibleExtent(traces,panel,sharedView.range,sharedView.wall,axis.type==="log"):null;
+    axis.range=range||old||axis.range||(axis.type==="log"?[-9,-6]:[0,1]);
+    axis.autorange=false;
+  }
+}
+function redrawAll() {
+  const next=redrawQueue.then(async()=>{sharedView.wall=el("clock").value==="wall";await draw();await drawTokens();if(truthData) await drawTruth(truthData,true);});
+  redrawQueue=next.catch(()=>{});return next;
+}
+function watchTimeView(id) {
+  const graph=el(id),state=chartStates[id];
+  graph.removeAllListeners("plotly_relayout");
+  graph.on("plotly_relayout",change=>{
+    if(state.busy) return;
+    if(!Object.keys(change).some(k=>/^xaxis[0-9]*\.(range|autorange)/.test(k))) return;
+    captureRange(id);
+    if(sharedView.mode==="full") sharedView.mode="fixed";
+    updateWidth();redrawAll().catch(showViewError);
   });
+  graph.removeAllListeners("plotly_restyle");
+  graph.on("plotly_restyle",()=>{if(!state.busy) redrawAll().catch(showViewError);});
 }
 function showViewError(error) { el("status").textContent="Chart update failed: "+error.message; }
 const el = id => document.getElementById(id);
@@ -106,7 +138,7 @@ const selectedRun = new URLSearchParams(window.location.search).get("run") || ""
 const runQuery = "run=" + encodeURIComponent(selectedRun);
 let cursor = 0, generation = -1, metadata = {};
 let events = [], observations = [], controls = [], decisions = [];
-let chartReady = false, rendering = false, clockInitializedFor = null;
+let chartReady = false, clockInitializedFor = null;
 const byId = new Map();
 const recordNumbers = new Map();
 let selectedId = null, truthRevision = null, truthRows = [];
@@ -203,10 +235,10 @@ output_enabled: "Output: " + (value ? "ON" : "OFF")
     const at = xFor(event);
     if (at !== null) {
       const range = el("clock").value === "virtual" ? [Math.max(0, at - 1), at + 1] : [new Date(Date.parse(at) - 30000).toISOString(), new Date(Date.parse(at) + 30000).toISOString()];
-      timeViews.chart.mode="fixed";el("time-view").value="fixed";
-      timeViews.chart.range=range.map(v=>timeNumber(v,timeViews.chart.wall));
-      timeViews.chart.width=timeViews.chart.range[1]-timeViews.chart.range[0];
-      draw().catch(showViewError);
+      sharedView.mode="fixed";el("time-view").value="fixed";
+      sharedView.range=range.map(v=>timeNumber(v,sharedView.wall));
+      sharedView.width=sharedView.range[1]-sharedView.range[0];
+      redrawAll().catch(showViewError);
     }
   }
   el("selected").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -242,22 +274,27 @@ function usageText(usage) {
     (usage.model?" · "+usage.model:"")+" · usage ID "+usage.usage_id;
 }
 async function drawTokens() {
-  const summary=reportedUsage(decisions), rows=summary.reports;
+  const summary=reportedUsage(decisions), rows=summary.reports.filter(r=>xFor(r)!==null);
   el("token-chart").hidden=!rows.length;
-  el("token-coverage").textContent=!rows.length ? "Token usage not reported. Cumulative usage unavailable; missing reports are not zero." : rows.length+" unique usage reports across "+decisions.length+" decision records; "+summary.missing+" without usage; "+summary.duplicates+" repeated IDs. Reported cumulative subset: "+summary.total+" tokens.";
+  el("token-coverage").textContent=!summary.reports.length ? "Token usage not reported. Cumulative usage unavailable; missing reports are not zero." : summary.reports.length+" unique usage reports ("+(summary.reports.length-rows.length)+" without a position on this clock) across "+decisions.length+" decision records; "+summary.missing+" without usage; "+summary.duplicates+" repeated IDs. Reported cumulative subset: "+summary.total+" tokens.";
   el("token-warning").textContent=summary.conflicts.length ? "Conflicting repeated usage IDs: "+summary.conflicts.map(r=>r.token_usage_id+" ("+shortId(r.event_id)+")").join(", ")+". First values retained." : "";
   if(!rows.length) {Plotly.purge("token-chart");return;}
   const trace=(field,name,panel)=>({type:"scatter",mode:"lines+markers",name,
-    x:rows.map(r=>recordNumbers.get(r.event_id)),y:rows.map(r=>r[field]),
+    x:rows.map(xFor),y:rows.map(r=>r[field]),
     xaxis:panel===1?"x":"x2",yaxis:panel===1?"y":"y2",
-    customdata:rows.map(r=>r.event_id),text:rows.map(r=>shortId(r.event_id)+" · "+r.token_usage_id),
+    customdata:rows.map(r=>r.event_id),text:rows.map(r=>shortId(r.event_id)+"<br>Usage ID: "+r.token_usage_id+"<br>"+(sharedView.wall?xFor(r):elapsedDetail(xFor(r)))+"<br>"+(sharedView.wall?"Recorded wall time":placementLabel(r))),
     hovertemplate:"%{text}<br>%{y} reported tokens<extra>"+name+"</extra>"});
-  await Plotly.react("token-chart",[trace("total_tokens","Tokens per reported decision",1),trace("cumulative_tokens","Cumulative reported tokens",2)],{
+  const traces=[trace("total_tokens","Tokens per reported decision",1),trace("cumulative_tokens","Cumulative reported tokens",2)];
+  const layout={
     paper_bgcolor:"#152330",plot_bgcolor:"#152330",font:{color:"#c9d8e5"},height:440,
-    margin:{l:90,r:25,t:35,b:50},uirevision:metadata.session_id,
-    xaxis:{anchor:"y",showticklabels:false},xaxis2:{anchor:"y2",matches:"x",title:{text:"Record number · first occurrence of each usage ID"}},
+    margin:{l:95,r:30,t:60,b:50},uirevision:metadata.session_id,
+    legend:{orientation:"h",x:0,y:1.15,font:{size:11}},
+    xaxis:{anchor:"y",showticklabels:false},xaxis2:{anchor:"y2",matches:"x",title:{text:"Shared recorded time"}},
     yaxis:{domain:[.58,1],title:{text:"Tokens / report"}},yaxis2:{domain:[0,.42],title:{text:"Cumulative tokens"}}
-  },{responsive:true,displaylogo:false});
+  };
+  viewLayout("token-chart",layout);applyY("token-chart",layout,traces);
+  await guardedPlot("token-chart",()=>Plotly.react("token-chart",traces,layout,{responsive:true,displaylogo:false,scrollZoom:true}));
+  watchTimeView("token-chart");
   el("token-chart").removeAllListeners("plotly_click");
   el("token-chart").on("plotly_click",event=>{const id=event.points[0]?.customdata;if(id)selectEvent(id);});
 }
@@ -329,15 +366,15 @@ async function draw() {
     yaxis2: { domain: [0.49, 0.71], title: { text: "Current · A" }, gridcolor: "#304254", rangemode: "tozero", automargin: true },
     yaxis3: { domain: [0.23, 0.44], title: { text: "Voltage · V" }, gridcolor: "#304254", rangemode: "tozero", automargin: true },
     yaxis4: { domain: [0, 0.17], title: { text: "Power requests<br>and results" }, tickvals: [0, 1, 2, 3], ticktext: ["Error / uncertain", "Not executed", "Completed", "Requested"], range: [-0.5, 3.5], gridcolor: "#304254", automargin: true } };
-  timeViews.chart.wall=axis==="wall";
+  sharedView.wall=axis==="wall";
   viewLayout("chart",layout,elapsedValues.filter(v=>v!==null));
-  rendering = true;
+  applyY("chart",layout,traces);
   await guardedPlot("chart",()=>Plotly.react("chart", traces, layout, { responsive: true, displaylogo: false, scrollZoom: true }));
   if (!chartReady) {
     el("chart").on("plotly_click", data => { const id = data.points[0]?.customdata; if (id) selectEvent(id); });
   }
   watchTimeView("chart", elapsedValues);
-  chartReady = true; rendering = false;
+  chartReady = true;
 }
 
 function readFailure(error) {
@@ -358,6 +395,8 @@ async function poll() {
     const changed = data.reset || (data.events?.length || 0) > 0;
     if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); resultsByCall.clear(); recordNumbers.clear(); selectedId = null; resetTimeView("chart");resetTimeView("truth-chart");truthCursor=0;truthGeneration=-1;truthRows=[];truthData=null;truthMore=false;truthRevision=null; }
     metadata = data.metadata || metadata;
+    runManagement = data.run_management || {};
+    updateManagement();
     if (metadata.session_id && clockInitializedFor !== metadata.session_id) {
       el("clock").value = metadata.session_kind === "simulated" && metadata.observed_time_origin ? "virtual" : "wall";
       resetTimeView("chart");resetTimeView("truth-chart");
@@ -382,8 +421,9 @@ async function poll() {
     el("observation-age").textContent = lastObservation ? `Last source observation: ${lastObservation.observed_at || "unavailable"} · Received/recorded ${Math.floor(observedAgo)} s ago. New observations appear only when a caller invokes a reading or action; this page does not measure.` : "No observation yet. This dashboard does not sample instruments.";
     el("status").textContent = `${data.has_more ? "Loading history" : "Caught up · waiting for new records"} · ${events.length} records · ${observations.length} readings · ${controls.filter(c => c.phase === "call_intent").length} power requests · ${decisions.length} decisions${data.message ? "\n" + data.message : ""}${data.errors ? `\n${data.errors} unreadable record(s): ${data.last_error}` : ""}`;
     el("status").className = data.status === "error" || data.errors ? "error" : "";
-    if (changed) { updatePanels(); await draw(); await drawTokens(); }
-    await pollTruth();
+    if (changed) updatePanels();
+    const truthChanged=await pollTruth();
+    if(changed||truthChanged) await redrawAll();
     catchUp=Boolean(data.has_more || truthMore);
   } catch (error) { el("status").textContent = readFailure(error); el("status").className = "error"; }
   finally {pollRunning=false;pollTimer=setTimeout(poll,catchUp ? 0 : 1000);}
@@ -396,29 +436,32 @@ async function pollTruth(force=false) {
     const response=await fetch(`/api/simulation-state?after=${truthCursor}&generation=${truthGeneration}&${runQuery}`,{cache:"no-store",signal:AbortSignal.timeout(5000)});
     if(!response.ok) throw new Error("HTTP "+response.status);
     const data=await response.json();
-    if(data.reset) {truthRows=[];truthRevision=null;resetTimeView("truth-chart");}
+    if(data.reset) {truthRows=[];truthRevision=null;}
     truthCursor=data.cursor??truthCursor;truthGeneration=data.generation??truthGeneration;
     truthMore=Boolean(data.has_more);
     if(data.status==="mismatch" || data.status==="unavailable" || data.status==="error") truthRows=[];
+    const changed=data.reset||(data.rows?.length||0)>0;
     truthRows.push(...(data.rows||[]));
     truthData={...data,rows:truthRows};
     el("truth-status").textContent=(truthMore?"Loading model history":"Caught up")+ " · "+truthRows.length+" model snapshots · "+data.status+" · "+(data.message||"Model snapshots available")+(data.errors?" · Invalid rows: "+data.errors:"");
-    await drawTruth(truthData,false);
+    return changed;
   } catch(error) {truthMore=false;el("truth-status").textContent=readFailure(error);}
 }
 async function drawTruth(data,force=false) {
-    const rows=data.rows||[];
+    const allRows=data.rows||[];
+    const rows=allRows.filter(r=>modelX(r)!==null);
     const revision = JSON.stringify([data.status,data.generation,rows.length,rows.at(-1)?.sequence,data.run_id]);
     if (!force && revision === truthRevision) return;
     truthRevision = revision;
-    if (data.status !== "ready" || !rows.length) { Plotly.purge("truth-chart"); return; }
+    if (data.status !== "ready" || !allRows.length) { Plotly.purge("truth-chart"); return; }
     const p = data.parameters || rows[0]?.parameters || {};
-    const last = rows.at(-1).state;
+    const last = allRows.at(-1).state;
+    el("truth-time-note").textContent=sharedView.wall ? (allRows.length-rows.length)+" model snapshots lack recorded wall time and are omitted; virtual view retains them." : "Model and public elapsed-time axes are synchronized. Synthetic observed_at is never treated as real wall time.";
     el("truth-parameters").textContent = "Synthetic loading: initial Rb " + fmt(p.initial_rb_effective_units) + " units; initial impurity " + fmt(p.initial_impurity_effective_units) + " units; ratio " + fmt(p.initial_rb_to_impurity_effective_ratio) + " (not measured mass/composition). Fixed resistance " + fmt(p.resistance_ohm) + " Ω. Remaining: Rb " + fmt(num(last.rb_remaining_fraction) === null ? null : last.rb_remaining_fraction * 100) + "%; impurity " + fmt(num(last.impurity_remaining_fraction) === null ? null : last.impurity_remaining_fraction * 100) + "%. Thermal state is normalized, not kelvin.";
     const series = (field,name,color,panel,scale=1) => ({type:"scatter",mode:"lines",name,
-      x:rows.map(r=>r.virtual_time_s/60),y:rows.map(r=>num(r.state[field]) === null ? null : r.state[field]*scale),
+      x:rows.map(modelX),y:rows.map(r=>num(r.state[field]) === null ? null : r.state[field]*scale),
       xaxis:panel === 1 ? "x" : "x"+panel,yaxis:panel === 1 ? "y" : "y"+panel,
-      line:{color,width:2},connectgaps:false,customdata:rows.map(r=>r.sequence),text:rows.map(r=>"Model snapshot S"+r.sequence+"<br>"+elapsedDetail(r.virtual_time_s/60)),
+      line:{color,width:2},connectgaps:false,customdata:rows.map(r=>r.sequence),text:rows.map(r=>"Model snapshot S"+r.sequence+"<br>"+(sharedView.wall?modelX(r):elapsedDetail(r.virtual_time_s/60))),
       hovertemplate:"%{text}<br>%{y}<extra>"+name+"</extra>"});
     const traces = [
       series("rb_remaining_fraction","Rb remaining · %","#e5bc75",1,100),
@@ -443,6 +486,7 @@ async function drawTruth(data,force=false) {
       yaxis3:{...base,domain:[0,.29],type:"log",tickformat:".3e",title:{text:"Model pressure · mbar"}}
     };
     viewLayout("truth-chart",truthLayout,rows.map(r=>r.virtual_time_s/60));
+    applyY("truth-chart",truthLayout,traces);
     await guardedPlot("truth-chart",()=>Plotly.react("truth-chart",traces,truthLayout,{responsive:true,displaylogo:false,scrollZoom:true}));
     watchTimeView("truth-chart", rows.map(r=>r.virtual_time_s/60));
     el("truth-chart").removeAllListeners("plotly_click");
@@ -457,30 +501,59 @@ async function drawTruth(data,force=false) {
 
 }
 
-el("clock").addEventListener("change", ()=>{resetTimeView("chart");draw().catch(showViewError);});
-for(const id of ["chart","truth-chart"]) {
-  const [selectId,,count]=viewIds(id), isMain=id==="chart";
-  const redraw=()=>isMain?draw():pollTruth(true);
+el("clock").addEventListener("change",()=>{sharedView.wall=el("clock").value==="wall";resetTimeView();redrawAll().catch(showViewError);});
+for(const id of Object.keys(chartStates)) {
+  const [selectId]=viewIds(id);
   el(selectId).addEventListener("change",()=>{
-    captureRange(id);timeViews[id].mode=el(selectId).value;
-    redraw().catch(showViewError);
+    captureRange(id);sharedView.mode=el(selectId).value;updateWidth();
+    redrawAll().catch(showViewError);
   });
-  el(isMain?"fit":"truth-fit").addEventListener("click",async()=>{
-    resetTimeView(id);
-    try {
-      if(el(id).layout) {
-        const update={};
-        for(let i=1;i<=count;i++) update[(i===1?"yaxis":"yaxis"+i)+".autorange"]=true;
-        await guardedPlot(id,()=>Plotly.relayout(id,update));
-      }
-      await redraw();
-    } catch(error) {showViewError(error);}
+  el(id==="chart"?"fit":id==="truth-chart"?"truth-fit":"token-fit").addEventListener("click",()=>{
+    resetTimeView();redrawAll().catch(showViewError);
+  });
+  const container=el(id==="chart"?"main-auto-y":id==="truth-chart"?"truth-auto-y":"token-auto-y");
+  const labels=id==="chart"?["Pressure","Current","Voltage"]:id==="truth-chart"?["Inventory","Release","Model pressure"]:["Per report","Cumulative"];
+  labels.forEach((label,index)=>{
+    const control=document.createElement("input");control.type="checkbox";control.checked=autoY[id][index];
+    control.id=id+"-auto-y-"+(index+1);
+    control.addEventListener("change",()=>{autoY[id][index]=control.checked;redrawAll().catch(showViewError);});
+    const wrapper=text("label"," Auto-Y "+label+" ");wrapper.prepend(control);container.append(wrapper);
   });
 }
 
+let runManagement = {};
+const collection = el("run-collection");
+collection.value = new URLSearchParams(location.search).get("archived") === "true" ? "archived" : "active";
+function updateManagement() {
+  el("archive-run").disabled = !runManagement.name || !!runManagement.current;
+  el("archive-run").hidden = !!runManagement.archived;
+  el("restore-run").hidden = !runManagement.archived;
+  el("delete-run").hidden = !runManagement.archived;
+  el("delete-run").disabled = !!runManagement.current;
+}
+async function manageRun(operation) {
+  const body = {run:selectedRun};
+  if (operation === "rename") {
+    body.display_name = prompt("Display name (raw folder and record IDs stay unchanged):",runManagement.display_name || "");
+    if (body.display_name === null) return;
+  } else if (operation === "delete") {
+    body.confirmation = prompt(`Permanently delete this archived run, including ALL records, CSVs and simulator observer files? This cannot be undone. Type the exact folder name:\n${runManagement.name}`);
+    if (body.confirmation === null) return;
+  }
+  try {
+    const response = await fetch(`/api/runs/${operation}`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Run action rejected");
+    if (result.deleted) {window.location.assign("/dashboard");return;}
+    Object.assign(runManagement,result);updateManagement();await refreshRuns();
+    el("run-help").textContent = "Run display updated. Raw records, recording and equipment are unchanged.";
+  } catch(error) {el("run-help").textContent = error.message;}
+}
+for (const operation of ["rename","archive","restore","delete"]) el(operation+"-run").addEventListener("click",()=>manageRun(operation));
+collection.addEventListener("change",refreshRuns);
 async function refreshRuns() {
   try {
-    const response = await fetch("/api/runs", {cache:"no-store", signal:AbortSignal.timeout(5000)});
+    const response = await fetch("/api/runs?archived=" + (collection.value === "archived"), {cache:"no-store", signal:AbortSignal.timeout(5000)});
     if (!response.ok) throw new Error("Cannot load run list");
     const data = await response.json();
     const picker = el("run-picker");
@@ -491,7 +564,7 @@ async function refreshRuns() {
       picker.append(option);
     }
     if (![...picker.options].some(option => option.value === selectedRun)) {
-      const missing = text("option", "Selected run is unavailable: " + selectedRun);
+      const missing = text("option", "Viewing a run outside this list: " + (selectedRun || "current"));
       missing.value = selectedRun; missing.disabled = true; picker.append(missing);
     }
     picker.value = selectedRun;
@@ -500,6 +573,7 @@ async function refreshRuns() {
 }
 el("run-picker").addEventListener("change", event => {
   const url = new URL(window.location.href);
+  url.searchParams.set("archived",String(collection.value === "archived"));
   if (event.target.value) url.searchParams.set("run",event.target.value);
   else url.searchParams.delete("run");
   // A new document discards every old fetch, cursor, selected detail and chart.

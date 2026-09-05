@@ -151,11 +151,18 @@
 - Record agent decision time, server receipt time, write time, and source
   observation time distinctly. Completion and normal/abnormal response are
   agent declarations, never substitutes for instrument-confirmed output state.
-- Dashboard routes are read-only and show observation age. Never expose
-  simulator internal truth through MCP tools/results or decision inputs. A separate
-  read-only human dashboard endpoint may show explicitly associated simulator
-  observer files only for simulated sessions; live and unknown sessions get no
-  internal-state data. Keep source mode and synthetic units conspicuous.
+- Dashboard data reads show observation age. Current-process simulator truth is
+  human-only until a validated non-null completion has been fully recorded.
+  All valid completion outcomes unlock hindsight immediately and permanently;
+  saved/non-live interrupted runs also permit review. No inactivity unlock or
+  relock guarantee. Completion does not stop the recorder or add actuation gates. Keep
+  synthetic units and hindsight versus live observation unmistakable.
+- Ordinary history tools bypass instrument/recording dispatch and expose bounded
+  public records with safe metadata, never arbitrary files or observer paths.
+- Human dashboard management may rename display labels, archive/restore saved
+  runs, and delete only archived non-current contained non-link folders after
+  exact-name confirmation. Preserve raw IDs/directories on rename/archive;
+  never test deletion on operational or historical datasets.
 - Keep dashboard run selection per browser/request. The empty selection always
   refers to the configured current directory; saved selections are immediate
   children of runs/. Never change the active recorder, start/stop acquisition,
@@ -188,8 +195,10 @@
 - Remote update workflow: modify locally, push, then root asks the operator to
   pull and restart. Do not add compatibility layers for stale remote code or
   administer the remote host as a substitute for the operator's deployment.
-- Dashboard time views are per chart: Fixed preserves range, Rolling retains
-  user-selected width, Full fits all plotted records. Only new data moves Rolling.
+- All dashboard charts share one wall/virtual clock and Fixed/Rolling/Full X range.
+  Auto-Y is per numerical panel and uses finite visible-time data (positive for log).
+  Manual Y ranges survive refresh when Auto-Y is off. Never reconstruct actual
+  wall timestamps from synthetic observed_at; omit unavailable wall coordinates.
 - Optional token_usage is caller-reported accounting, never automatic app usage,
   billing truth or a conditioning policy input. Preserve missing values; deduplicate
   usage_id per run for display, warn on conflicting repeats, keep raw submissions.

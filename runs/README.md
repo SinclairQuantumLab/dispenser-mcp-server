@@ -37,3 +37,11 @@ server-loopback browser can open directly and retrieve the code at
 credentials or an authenticated browser with a blind decision agent. Local files
 and loopback remain accessible to same-host full-access agents; the dashboard
 login does not isolate that environment.
+The dashboard Main list/Archive selector loads saved runs without affecting acquisition.
+Display rename and archive flags use run-management.json; directories and original
+records do not move. Only archived non-current runs can be permanently deleted by
+an authenticated human after exact folder-name confirmation, including observer files.
+MCP history tools provide ordinary paged records and explicit saved-simulation hindsight;
+current-process internal state unlocks after fully recorded valid completion, never
+merely inactivity. Disclosure cannot be undone; current recorder folders remain
+archive/delete-protected. Saved interrupted runs also permit hindsight review.

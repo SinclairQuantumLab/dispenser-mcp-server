@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -27,6 +28,7 @@ class Observer:
             "sequence": self.sequence,
             "observer_error_count": self.error_count,
             **snapshot,
+            "recorded_at": datetime.now(UTC).isoformat(),
         }
         self.sequence += 1
         try:

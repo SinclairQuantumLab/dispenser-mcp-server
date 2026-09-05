@@ -15,6 +15,7 @@ from dispenser_conditioning_mcp.current_policy import (
     SPD_PARALLEL_CURRENT_MAX_A,
     effective_load_current_limit,
 )
+from dispenser_conditioning_mcp.run_history import HISTORY_TOOLS, RunHistory
 from dispenser_simulator.model import HiddenSimulatorConfig
 from dispenser_simulator.recording import RecordingAdapter, create_recording_service
 from dispenser_simulator.server import build_runtime
@@ -24,10 +25,14 @@ class SimulationMCPServer(MCPServer[None]):
     def __init__(self, adapter: RecordingAdapter) -> None:
         super().__init__(
             "dispenser-conditioning-simulator",
-            instructions=f"Initial operator combined-load current cap: {adapter.router.simulator.config.max_load_current_a:g} A (effective {effective_load_current_limit(adapter.router.simulator.config.max_load_current_a):g} A; software maximum {MAX_CONFIGURABLE_LOAD_CURRENT_A:g} A; SPD parallel maximum {SPD_PARALLEL_CURRENT_MAX_A:g} A). reload_dispenser_current_limit reapplies only operator max_load_current_A; readback/reload results give current cap. Synthetic conditioning instruments. Use public observations and submit action context for normal controls; no model-internal state is available through tools.",
+            instructions=f"Initial operator combined-load current cap: {adapter.router.simulator.config.max_load_current_a:g} A (effective {effective_load_current_limit(adapter.router.simulator.config.max_load_current_a):g} A; software maximum {MAX_CONFIGURABLE_LOAD_CURRENT_A:g} A; SPD parallel maximum {SPD_PARALLEL_CURRENT_MAX_A:g} A). reload_dispenser_current_limit reapplies only operator max_load_current_A; readback/reload results give current cap. Synthetic conditioning instruments. Use public observations and submit action context for normal controls; model state is available only for explicit saved-run hindsight or after successfully recorded completion; disclosure cannot be undone.",
         )
         self.adapter = adapter
         self.recording = adapter.service
+        self.history = RunHistory(
+            self.recording.directory,
+            completion_recorded=lambda: self.recording.completion_recorded,
+        )
 
     async def list_tools(self) -> list[Tool]:
         return [
@@ -39,7 +44,7 @@ class SimulationMCPServer(MCPServer[None]):
                 annotations=ToolAnnotations(**spec["annotations"]),
             )
             for spec in self.adapter.catalog
-        ]
+        ] + self.history.tools()
 
     async def call_tool(
         self,
@@ -47,6 +52,8 @@ class SimulationMCPServer(MCPServer[None]):
         arguments: dict[str, Any],
         context: Context[None, Any] | None = None,
     ) -> CallToolResult:
+        if name in HISTORY_TOOLS:
+            return await self.history.call(name, arguments)
         return await self.adapter.call(name, arguments)
 
 

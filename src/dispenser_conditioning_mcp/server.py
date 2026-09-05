@@ -45,6 +45,7 @@ from dispenser_conditioning_mcp.recording_service import (
     error_result,
     mark_execution_started,
 )
+from dispenser_conditioning_mcp.run_history import HISTORY_TOOLS, RunHistory
 
 READ_VACUUM_PRESSURE_TOOL = "read_vacuum_pressure"
 READ_POWER_STATE_TOOL = "read_dispenser_power_state"
@@ -88,10 +89,16 @@ class DispenserConditioningMCPServer(MCPServer[None]):
         super().__init__(name, instructions=instructions)
         self._tool_arguments = dict(tool_arguments)
         self.recording = recording
+        self.history = RunHistory(
+            recording.directory,
+            completion_recorded=lambda: recording.completion_recorded,
+        )
 
     async def list_tools(self) -> list[Tool]:
         tools = await super().list_tools()
-        return [self._strict_input_schema(tool) for tool in tools]
+        return [
+            self._strict_input_schema(tool) for tool in tools
+        ] + self.history.tools()
 
     async def call_tool(
         self,
@@ -99,6 +106,8 @@ class DispenserConditioningMCPServer(MCPServer[None]):
         arguments: dict[str, Any],
         context: Context[None, Any] | None = None,
     ) -> CallToolResult | InputRequiredResult:
+        if name in HISTORY_TOOLS:
+            return await self.history.call(name, arguments)
         allowed = self._tool_arguments.get(name)
         rejection = None
         if allowed is not None:

@@ -221,6 +221,9 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
         "set_dispenser_current",
         "shutdown_dispenser_power",
         "record_conditioning_decision",
+        "list_conditioning_runs",
+        "read_conditioning_run",
+        "read_saved_simulation_state",
     ]
     for tool in tools:
         assert tool.input_schema["additionalProperties"] is False
@@ -311,7 +314,13 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
     assert all(
         annotations(tool.name).open_world_hint is True
         for tool in tools
-        if tool.name != "reload_dispenser_current_limit"
+        if tool.name
+        not in {
+            "reload_dispenser_current_limit",
+            "list_conditioning_runs",
+            "read_conditioning_run",
+            "read_saved_simulation_state",
+        }
     )
     assert annotations("reload_dispenser_current_limit").open_world_hint is False
 

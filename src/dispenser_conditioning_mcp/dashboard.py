@@ -17,7 +17,6 @@ from starlette.responses import (
 )
 from starlette.routing import BaseRoute, Route
 
-from dispenser_conditioning_mcp import run_directory
 from dispenser_conditioning_mcp.dashboard_access import DashboardAccess
 from dispenser_conditioning_mcp.session_records import (
     as_dict,
@@ -38,7 +37,10 @@ def dashboard_routes(
     replay: bool = False,
     access: DashboardAccess | None = None,
 ) -> list[BaseRoute]:
+    from dispenser_conditioning_mcp.run_history import RunCatalog
+
     access = access or DashboardAccess()
+    catalog = RunCatalog(directory, protect_current=not replay)
     directory = directory.resolve()
     readers: dict[Path, tuple[SessionTail, SimulationObserverReader]] = {}
 
@@ -46,17 +48,10 @@ def dashboard_routes(
         request: Request,
     ) -> tuple[SessionTail, SimulationObserverReader, bool]:
         name = request.query_params.get("run", "")
-        path = directory
-        if name:
-            if name in {".", ".."} or "/" in name or "\\" in name:
-                raise ValueError("Choose a run from the list")
-            root = run_directory.RUNS_DIRECTORY.resolve()
-            path = (root / name).resolve()
-            if path.parent != root or not path.is_dir():
-                raise ValueError("Run is not an immediate folder in the runs directory")
-            reason = unavailable_reason(path)
-            if reason:
-                raise ValueError(reason)
+        path = catalog.resolve(name)
+        reason = unavailable_reason(path) if name else None
+        if reason:
+            raise ValueError(reason)
         if path not in readers:
             readers[path] = (
                 SessionTail(path),
@@ -68,45 +63,63 @@ def dashboard_routes(
         return tail, observer, replay or path != directory
 
     async def run_list(request: Request) -> Response:
-        items = [
-            {
-                "key": "",
-                "name": directory.name,
-                "label": "Configured saved run"
-                if replay
-                else "Live view · current process",
-                "available": True,
-                "reason": None,
-            }
-        ]
-        root = run_directory.RUNS_DIRECTORY.resolve()
         try:
-            children = sorted(root.iterdir(), key=lambda path: path.name, reverse=True)
-        except FileNotFoundError:
-            children = []
-        except OSError as error:
-            return JSONResponse({"error": str(error)}, status_code=500)
-        for path in children:
-            if (
-                not path.is_dir()
-                or path.resolve().parent != root
-                or path.resolve() == directory
-            ):
-                continue
-            reason = unavailable_reason(path)
-            items.append(
-                {
-                    "key": path.name,
-                    "name": path.name,
-                    "label": path.name,
-                    "available": reason is None,
-                    "reason": reason,
-                }
+            items = catalog.list(request.query_params.get("archived") == "true")
+            return JSONResponse(
+                {"runs": items, "live_view_available": not replay},
+                headers={"Cache-Control": "no-store"},
             )
-        return JSONResponse(
-            {"runs": items, "live_view_available": not replay},
-            headers={"Cache-Control": "no-store"},
-        )
+        except (ValueError, OSError):
+            return JSONResponse({"error": "Run list unavailable"}, status_code=500)
+
+    async def manage_run(request: Request) -> Response:
+        origin = request.headers.get("origin")
+        if origin and origin != str(request.base_url).rstrip("/"):
+            return JSONResponse(
+                {"error": "Run management requires the dashboard origin"},
+                status_code=403,
+            )
+        if request.headers.get("content-type", "").split(";")[0] != "application/json":
+            return JSONResponse(
+                {"error": "Expected dashboard JSON request"}, status_code=415
+            )
+        try:
+            body = await request.body()
+            if len(body) > 4096:
+                raise ValueError("Run management request is too large")
+            decoded: object = json.loads(body)
+            if not isinstance(decoded, dict):
+                raise ValueError("Expected a JSON object")
+            values = cast(dict[str, Any], decoded)
+            if set(values) - {
+                "run",
+                "display_name",
+                "confirmation",
+            }:
+                raise ValueError("Unsupported run management fields")
+            key = values.get("run", "")
+            if not isinstance(key, str):
+                raise ValueError("Invalid run key")
+            path = catalog.resolve(key)
+            result = catalog.manage(
+                key,
+                request.path_params["operation"],
+                display_name=values.get("display_name"),
+                confirmation=values.get("confirmation"),
+            )
+            if result.get("deleted"):
+                readers.pop(path, None)
+            return JSONResponse(result, headers={"Cache-Control": "no-store"})
+        except json.JSONDecodeError:
+            return JSONResponse(
+                {"error": "Invalid run management JSON"}, status_code=400
+            )
+        except ValueError as error:
+            return JSONResponse({"error": str(error)}, status_code=400)
+        except (OSError, TypeError):
+            return JSONResponse(
+                {"error": "Run files could not be updated"}, status_code=400
+            )
 
     async def simulation_state(request: Request) -> Response:
         try:
@@ -132,6 +145,13 @@ def dashboard_routes(
         except ValueError as error:
             return JSONResponse({"error": str(error)}, status_code=400)
         snapshot = tail.snapshot(after, generation)
+        management = catalog.management(tail.directory)
+        snapshot["metadata"]["label"] = management["display_name"]
+        snapshot["run_management"] = {
+            **management,
+            "name": tail.directory.name,
+            "current": not replay and tail.directory == directory,
+        }
         snapshot["recording_view"] = "saved_recording" if saved else "process_session"
         return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
@@ -165,11 +185,13 @@ def dashboard_routes(
         Route("/session.js", script),
         Route("/vendor/plotly-basic-4.0.0.min.js", plotly),
         Route("/api/runs", run_list),
+        Route("/api/runs/{operation}", manage_run, methods=["POST"]),
         Route("/api/session", data),
         Route("/api/simulation-state", simulation_state),
     ]
     protected: list[BaseRoute] = [
-        Route(route.path, access.protect(route.endpoint)) for route in routes
+        Route(route.path, access.protect(route.endpoint), methods=route.methods)
+        for route in routes
     ]
     return protected + access.routes()
 

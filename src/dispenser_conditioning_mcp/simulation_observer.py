@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -321,6 +322,12 @@ class SimulationObserverReader:
             row["observed_at"], str
         ):
             raise ValueError("Invalid observed_at")
+        recorded_at = row.get("recorded_at")
+        if recorded_at is not None:
+            if not isinstance(recorded_at, str):
+                raise ValueError("Invalid recorded_at")
+            if datetime.fromisoformat(recorded_at.replace("Z", "+00:00")).tzinfo is None:
+                raise ValueError("recorded_at must include a timezone")
         self.run_id, self.parameters = run, parameters
         self.rows.append(
             {
@@ -328,6 +335,7 @@ class SimulationObserverReader:
                 "sequence": sequence,
                 "virtual_time_s": seconds,
                 "observed_at": row.get("observed_at"),
+                "recorded_at": recorded_at,
                 "kind": row.get("kind"),
                 "state": state,
                 "parameters": parameters,

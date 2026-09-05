@@ -129,7 +129,7 @@ async def test_local_http_simulator_reload_discovery_and_recording(tmp_path):
                 await asyncio.sleep(0.01)
             async with Client(f"http://127.0.0.1:{port}/mcp") as client:
                 tools = (await client.list_tools()).tools
-                assert len(tools) == 8
+                assert len(tools) == 11
                 assert (
                     next(
                         t for t in tools if t.name == RELOAD_CURRENT_LIMIT_TOOL

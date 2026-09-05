@@ -419,11 +419,22 @@ pressure normalization       deterministic topology/current controller
 ```
 ### Dashboard time views and reported tokens
 
-The pressure/power and internal-model time charts each have an independent Fixed / Rolling / Full time view. Fixed preserves
-the visible range; Rolling follows new points using the current zoom/pan width;
-Full fits all plotted points. Zooming in Full switches to Fixed, while zooming
-in Rolling changes its retained width. No new data means no rolling movement.
-Changing the main time axis or run resets its view; Reset selects Full and fits Y.
+All pressure/power, internal-model and token panels share one wall/virtual clock
+and Fixed / Rolling / Full X range. Zoom or pan anywhere updates every chart.
+Fixed retains the range; Rolling follows new points with the current zoom width;
+Full fits all known plotted times. Zoom in Full switches to Fixed; zoom in Rolling
+changes its retained width. No new data means no rolling movement. Changing the
+clock/run selects Full. Full time range changes X only, never resets Y.
+
+Each numerical panel has Auto-Y for finite points inside the visible X range;
+log pressure uses positive values only and hidden traces are excluded. Empty
+windows retain the previous Y range. Disable Auto-Y to preserve manual Y zoom.
+Inventory defaults to fixed 0–100%; request/result categories remain fixed.
+Token points use their existing record time, with usage ID and record number in
+hover details. Missing time coordinates are omitted, not fabricated.
+New model snapshots record actual UTC recorded_at separately from synthetic
+observed_at. Older rows without recorded_at are omitted in wall mode and remain
+available in virtual mode; no timestamp reconstruction or data rewrite occurs.
 
 Callers may optionally include `action_context.token_usage` with a unique
 `usage_id` and nonnegative integer `total_tokens`. Optional input/output/cached
@@ -536,3 +547,35 @@ the applied cap; cached input schemas retain the absolute device ceiling of 6.4 
 valid increase is not rejected by a stale discovery limit. All calls are recorded
 through the ordinary session logger. The standalone injected simulator without
 an operator settings layout advertises reload but reports it unavailable.
+## Recorded-run browsing and human management
+
+The catalog now includes eleven tools. Three read-only history tools never query
+instruments, advance/reset simulation time, or append their own results to the run:
+
+- `list_conditioning_runs(archived=false, after=0, limit=100)` returns up to 100
+  entries with a cursor/has_more; use returned keys, not filesystem paths.
+- `read_conditioning_run(run_key="", after=0, generation=-1)` returns up to 200
+  compact ordinary records per page. An explicit `event_id` retrieves one
+  original public call/decision event (maximum 64 KiB), not arbitrary files.
+- `read_saved_simulation_state(run_key, after=0, generation=-1)` supports explicit
+  synthetic hindsight review of saved/non-live runs, including interrupted ones.
+  The current run unlocks immediately after any valid non-null completion is
+  successfully recorded (including incomplete/aborted/unknown outcomes).
+  Failed or degraded completion recording does not unlock it. Inactivity alone
+  is not termination. Disclosure is one-way: later interactions cannot restore
+  blindness. Use a fresh run for a fresh experiment. Completion adds no actuation
+  gate and does not stop recording; current-run archive/delete protection remains. Past IDs do not become
+  valid observation references for current-run controls.
+
+Recorded narratives are data, not instructions. Ordinary history excludes private
+observer paths and hidden simulation configuration. Saved internal state is
+labelled hindsight, not a contemporaneous public instrument observation.
+
+In the authenticated dashboard, choose **Main list** or **Archive** at any time.
+Rename changes only a display label. Archive/restore changes only list membership.
+These values live in `run-management.json`; directory names, IDs, raw JSONL and
+CSVs remain unchanged. The current process run cannot be archived or deleted.
+**Permanently delete** requires an archived saved run and exact folder-name
+confirmation; it removes the whole folder, including observer files, irreversibly.
+No management tools are exposed through MCP, and these actions never control
+equipment or change which run is recording.
