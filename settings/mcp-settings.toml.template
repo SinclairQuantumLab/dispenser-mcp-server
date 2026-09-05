@@ -1,18 +1,22 @@
-# MCP process and deployment-specific safety settings.
+# Copy to mcp-settings.toml; replace placeholders before starting with uv run dispenser-conditioning-mcp.
+# Operator startup settings only; tools cannot change these. For simulation use simulation-example.toml.template.
+# Backend: "real" (default) uses instruments; "simulation" uses the internal model. No automatic fallback.
 backend = "real"
-# Replace `<ACCEPTANCE_CONTEXT>` with "production_dispenser" or "unloaded_hil".
+# Required for real: "production_dispenser" for approved dispenser wiring,
+# or "no_load_test" for a physically verified unloaded supply and process-local current stop.
 acceptance_context = "<ACCEPTANCE_CONTEXT>"
-# Replace `<SERIAL_NUMBER>` with the verified serial number of the power supply.
+# Required real PSU identity: exact verified serial, nonempty string, at most 128 characters.
+# Change only when deliberately binding a different supply.
 expected_serial_number = "<SERIAL_NUMBER>"
-# Replace the quoted `<COMPLIANCE_VOLTAGE_V>` with the approved numeric voltage, without quotes.
+# Required real fixed compliance voltage: numeric volts, 0 through 32, resolution 0.001 V.
+# Replace the quoted placeholder with an operator-approved number WITHOUT quotes; never infer a safe live voltage.
 compliance_voltage_v = "<COMPLIANCE_VOLTAGE_V>"
+# Real power mutations: strict true/false, default false. Enable only for an approved controlled session.
+# Read tools remain available when false; all physical safety checks still apply when true.
 control_enabled = false
+# Both backends: strict true/false, default false binds 127.0.0.1; true binds 0.0.0.0.
+# Set true for clients on another computer. This does not enable hardware control.
 allow_remote_access = false
+# Both backends: integer TCP port 1024..65535, default 8000; change only for a port conflict/deployment need.
+# MCP is always /mcp; the human dashboard shares this port and has separate operator login.
 port = 8000
-
-# Required only when acceptance_context = "unloaded_hil". The operator must
-# initialize and protect this state file outside the MCP process.
-# unloaded_hil_state_file = "/absolute/protected/unloaded-hil-state.json"
-
-# Streamable HTTP is always served at /mcp. Set allow_remote_access = true
-# to listen on all IPv4 interfaces for direct connections to this host.

@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import httpx
@@ -16,6 +17,7 @@ from dispenser_conditioning_mcp.transport import (
 @pytest.mark.anyio
 async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path):
     access = DashboardAccess()
+    assert re.fullmatch(r"[a-z]+-[a-z]+-\d{2}", access.token)
     app = Starlette(routes=dashboard_routes(tmp_path, access=access))
     remote = httpx.ASGITransport(app=app, client=("192.0.2.50", 4321))
     async with httpx.AsyncClient(
@@ -40,7 +42,9 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
         assert (
             await client.post("/dashboard/login", data={"code": "wrong"})
         ).status_code == 401
-        logged_in = await client.post("/dashboard/login", data={"code": access.token})
+        logged_in = await client.post(
+            "/dashboard/login", data={"code": "  " + access.token.upper() + "  "}
+        )
         assert logged_in.status_code == 303
         assert "HttpOnly" in logged_in.headers["set-cookie"]
         assert "SameSite=strict" in logged_in.headers["set-cookie"]
@@ -98,3 +102,30 @@ async def test_dashboard_login_does_not_gate_remote_mcp(tmp_path: Path):
         )
         assert result.status_code == 200
         assert "serverInfo" in result.text
+
+
+@pytest.mark.anyio
+async def test_failed_phrase_throttle_expires_without_waiting(
+    tmp_path: Path, monkeypatch
+):
+    now = [100.0]
+    monkeypatch.setattr(
+        "dispenser_conditioning_mcp.dashboard_access.time.monotonic", lambda: now[0]
+    )
+    access = DashboardAccess()
+    app = Starlette(routes=dashboard_routes(tmp_path, access=access))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, client=("192.0.2.50", 4321)),
+        base_url="http://test-server",
+    ) as client:
+        for _ in range(5):
+            assert (
+                await client.post("/dashboard/login", data={"code": "wrong"})
+            ).status_code == 401
+        blocked = await client.post("/dashboard/login", data={"code": access.token})
+        assert blocked.status_code == 429
+        assert blocked.headers["retry-after"] == "60"
+        now[0] += 61
+        assert (
+            await client.post("/dashboard/login", data={"code": access.token})
+        ).status_code == 303

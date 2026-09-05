@@ -163,7 +163,10 @@ live-hardware records, and unknown/fixture data. Short record numbers link chart
 points to readable requests, results, decisions and supporting observations.
 Simulated sessions may additionally show a human-only internal-state panel from
 an associated observer file; this never changes MCP tool results or decision inputs.
-Remote dashboard visitors must enter the operator access code at
+The phrase has two random words and two digits, changes each HTTP process, and
+is reusable during that process. Five incorrect logins block further login
+attempts for up to 60 seconds across the process; cookies remain separate random
+secrets. Remote dashboard visitors must enter the operator access phrase at
 `/dashboard/login`. Each HTTP process generates a new code, shown only in its
 startup terminal and on the server-loopback `/dashboard/operator` page. Actual
 loopback connections can view directly. The code is reusable until restart, not a
@@ -199,7 +202,7 @@ expected-to-target transition is valid.
 Startup accepts exactly one deployment profile: `parallel_ch1` on `CH1`, with
 load-current factor 2, a 2.4 A native ceiling, a 4.8 A configured load-current
 ceiling, and 6.4 A hardware capability. Startup also binds one explicit
-acceptance context: `production_dispenser` or `unloaded_hil`. The active context
+acceptance context: `production_dispenser` or `no_load_test`. The active context
 and its required enable confirmation are returned in structured safety limits.
 
 The server never changes tracking mode. It requires live `parallel` mode before
@@ -231,8 +234,8 @@ confirmation selected at startup:
 - `production_dispenser` advertises only
   `parallel_connection_confirmation="confirmed_parallel_ch1"`, after the human
   verifies the approved physical parallel CH1 dispenser wiring.
-- `unloaded_hil` advertises only
-  `unloaded_hil_connection_confirmation="confirmed_no_dispenser_or_unapproved_load_connected"`,
+- `no_load_test` advertises only
+  `no_load_test_connection_confirmation="confirmed_no_dispenser_or_unapproved_load_connected"`,
   after the human verifies that no dispenser or unapproved load is connected.
   Operator-approved metrology wiring, including a voltmeter or no wiring, is
   allowed by this acceptance context.
@@ -241,70 +244,21 @@ The wrong context's field or literal is rejected before a driver session opens.
 Instrument tracking mode cannot verify external wiring or no-load state. These
 literals are caller attestations, not cryptographic proof of human provenance;
 the MCP host must keep a real human approval in the loop for every enable action.
-Never use `unloaded_hil` for a connected dispenser.
+Never use `no_load_test` for a connected dispenser.
 
-`unloaded_hil` also activates deterministic durable operation-state control and
-a measured-current trip. Before any mutating request can open a device session,
-the controller commits a pending-operation record and a separate pending guard
-in the protected startup-bound state directory. After every completed mutating
-power operation, it performs a
-separate fresh native-CH1 measured-current query. A finite value in the inclusive
-fixed band `[-0.001 A, +0.001 A]` is accepted. One finite sample outside that
-band trips immediately; there is no energized averaging or debounce. A read
-error, unavailable value, or non-finite value also trips fail-closed. The first
-observation or unavailable-measurement reason, UTC timestamp, and operation are
-recorded in an operator-bound latch. The same tool call then commands and
-verifies CH1 and CH2 outputs off before zeroing and verifying both current
-setpoints; a fresh measured-current value inside the same band must also be
-verified before the error reports confirmed recovery. The tool returns an
-explicit trip error, and every later mutating request is rejected before a
-device session is opened. This also applies to a valid write-free compare-and-set
-replay. `read_dispenser_power_state` remains write-free and exposes `unlatched`,
-`latched`, or `unavailable_fail_closed` diagnostics.
+No-load tests check fresh finite native current after each completed mutation
+against the inclusive ±0.001 A band. An outside-band or unavailable reading
+triggers best-effort verified two-channel output OFF, then zero current, and a
+process-local stop latch. Subsequent energizing is blocked in that process;
+explicit shutdown remains available with operator control authorization and
+matching instrument identity. An uncertain shutdown is reported, never assumed
+successful or automatically retried.
 
-Only a safely completed operation with a fresh in-band measurement publishes and
-verifies a completed-operation record before retiring its pending guard. A
-failure before that durable publication leaves the guard authoritative. If
-guard-retirement durability is uncertain after successful publication, a crash
-can only restore the guard and make restart more restrictive. A crash,
-unfinished call, uncertain write, trip-record persistence failure, or reported
-completion-record failure therefore leaves a fresh process fail-closed before
-device access. Trip recovery commands and verifies the two-channel shutdown
-before attempting to replace the already-durable pending state with a trip
-record, so hardware shutdown does not wait on trip-record persistence.
-
-On Windows, atomic state-file replacement retries only transient access, sharing,
-or lock conflicts (`WinError 5`, `32`, or `33`) with four fixed delays totaling
-75 ms. Other filesystem errors are not retried. A pending-marker retry occurs
-before device access; a trip-record retry occurs only after verified two-channel
-shutdown and recovery-current measurement. If retries are exhausted, the
-original pending record remains and control fails closed.
-
-The `0.001 A` limit is hard-coded and returned as
-`safety_limits.unloaded_hil_safe_measured_current_abs_a`; no MCP input can change
-it. It matches one SPD3303X current-display/programming resolution increment,
-but it is a nuisance-trip suppression policy, not a claim that a current inside
-the band proves no physical load. The published SPD3303X readback-current
-accuracy is materially wider than one increment. A supervised fresh-sample
-characterization remains required before another physical acceptance run.
-
-The durable state file and acceptance context are startup-only settings. No MCP tool,
-prompt, or argument can select the file, change context, clear, reset, or bypass
-the state. The file backend can begin and safely complete normal operations and
-record the first trip; it exposes no reset/delete operation. A human
-must perform reset through a separately protected out-of-band procedure after
-physically verifying the supply. A future physical emergency-button/reset
-service should own that procedure. The MCP process needs create/read access,
-but production ACLs and process isolation must deny the execution agent direct
-access to the latch directory. This software latch is not a physical E-stop,
-watchdog, or guarantee of power removal.
-
-The adapter enables the driver's write verification. Each related semantic
-write group and each state snapshot is submitted as a non-interleaved gateway
-batch. This prevents another gateway batch from interleaving inside one
-submitted batch. It does not exclude a separate authorized writer between the
-MCP's precondition snapshot and later write batch; all other clients must remain
-read-only during a conditioning run until a workflow-duration lease exists.
+There is no durable safety file, pending guard, initializer, reset acknowledgement,
+or startup inspection gate. A new process starts unlatched. The human beside
+the instruments handles between-session inspection and state checks. Ordinary
+run records preserve observations and requests, not control authorization.
+No software check runs continuously or guarantees OFF after process death.
 
 ## Development setup
 
@@ -350,7 +304,7 @@ older v0.4.3 input schema.
 
 | File | Operator settings |
 | --- | --- |
-| `settings/mcp-settings.toml` | Explicit acceptance context, expected PSU serial, fixed compliance voltage, control flag, allow_remote_access (default false), port (default 8000), and optional protected unloaded-HIL state path |
+| `settings/mcp-settings.toml` | Explicit acceptance context, expected PSU serial, fixed compliance voltage, control flag, allow_remote_access (default false), port (default 8000), |
 | `settings/hicube-neo-client-settings.toml` | HiCube host, port (default 4840), and timeout (default 5 s) |
 | `settings/py-siglent-spd3000/gateway-settings.toml` | Gateway identifier, timeout (default 5 s), and minimum command interval (default 100 ms) |
 
@@ -358,9 +312,6 @@ older v0.4.3 input schema.
 `8000`. The
 acceptance context, expected serial, compliance voltage, HiCube host, and
 gateway identifier have no implicit deployment value and must be filled in.
-When the context is `unloaded_hil`, `unloaded_hil_state_file` must be an absolute
-path in an existing operator-protected directory. It is rejected in
-`production_dispenser`.
 
 The following deployment contract is fixed in code and cannot be weakened in a
 settings file: authenticated gateway connection, `parallel_ch1`, `CH1`, model
@@ -398,7 +349,7 @@ Remove `transport` and the entire `[streamable_http]` table; add
 boolean to true when remote clients should connect directly. Old transport keys
 are rejected rather than silently ignored.
 
-### Minimal unloaded-HIL acceptance sequence
+### Minimal no-load test acceptance sequence
 
 For a supply with no dispenser or unapproved load connected, an operator may
 approve a low 1.0 V fixed compliance voltage for the first acceptance run.
@@ -408,21 +359,20 @@ the reviewed first exact 0.2 A load-current step in this acceptance sequence.
 
 1. Keep outputs off and set parallel tracking mode through an operator-controlled
    out-of-band procedure. MCP intentionally exposes no tracking-mode command.
-2. Start with `unloaded_hil`, the exact bound identity, 1.0 V compliance,
+2. Start with `no_load_test`, the exact bound identity, 1.0 V compliance,
    exact 0.2 A upward step, and control
-   disabled. Bind a protected absolute durable-state file path outside agent
-   access. Read state and verify identity, output off, `parallel` mode, and an
+   disabled. Read state and verify identity, output off, `parallel` mode, and an
    `unlatched` interlock.
 3. Restart with the same policy and control enabled. Call
    `prepare_dispenser_power`, then re-read state.
 4. Ask the human immediately before enable to verify that no dispenser or
    unapproved load is connected and that any present metrology wiring is
    operator-approved. Call `enable_dispenser_output` with a fresh `action_context` and
-   `unloaded_hil_connection_confirmation="confirmed_no_dispenser_or_unapproved_load_connected"`.
+   `no_load_test_connection_confirmation="confirmed_no_dispenser_or_unapproved_load_connected"`.
 5. Re-read state, set commanded load current from 0.0 A to 0.2 A with
    compare-and-set, and re-read state. Every completed mutation must produce a
    separate native current measurement inside the inclusive fixed
-   `[-0.001 A, +0.001 A]` band or the durable latch trips. No load-current draw
+   `[-0.001 A, +0.001 A]` band or the process-local latch trips. No load-current draw
    or absence of a load should be inferred from the native measurement.
 6. Set commanded load current back to 0.0 A, call
    `shutdown_dispenser_power`, and perform a final read.

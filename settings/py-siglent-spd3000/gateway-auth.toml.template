@@ -1,4 +1,5 @@
-# Copy this file to gateway-auth.toml in this directory.
-# Keep the populated file untracked and outside agent-visible output.
-# Replace `<TOKEN>` placeholder with the authentification token in the `gateway-auth.toml` file in the py-siglent-spd3000 gateway server repo.
+# Real backend only; copy to gateway-auth.toml. Simulation does not read this file.
+# Required nonempty shared authentication token, no default: copy the exact token configured on the gateway.
+# Upstream py-siglent-spd3000 owns this format; do not add other keys.
+# Keep the populated file untracked and do not show its contents to an agent or in logs.
 token = "<TOKEN>"

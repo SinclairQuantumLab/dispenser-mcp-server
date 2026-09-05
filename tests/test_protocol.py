@@ -15,11 +15,11 @@ from dispenser_conditioning_mcp.domain import (
 from dispenser_conditioning_mcp.power_domain import (
     DispenserPowerState,
     EnableConfirmation,
+    NoLoadTestInterlockState,
     PowerAcceptanceContext,
     PowerActionResult,
     PowerControlError,
     PowerSafetyLimits,
-    UnloadedHilInterlockState,
 )
 from dispenser_conditioning_mcp.recording_service import RecordingService
 from dispenser_conditioning_mcp.server import create_server
@@ -162,17 +162,17 @@ def _power_state(
         regulation_mode="CC",
         compliance_voltage_matches=True,
         prepared_for_enable=False,
-        unloaded_hil_interlock=UnloadedHilInterlockState(
-            applicable=acceptance_context == "unloaded_hil",
+        no_load_test_interlock=NoLoadTestInterlockState(
+            applicable=acceptance_context == "no_load_test",
             status=(
                 "unlatched"
-                if acceptance_context == "unloaded_hil"
+                if acceptance_context == "no_load_test"
                 else "not_applicable"
             ),
             trip=None,
             validation_status=(
                 "offline_simulation_only_not_retested_on_physical_instrument"
-                if acceptance_context == "unloaded_hil"
+                if acceptance_context == "no_load_test"
                 else "not_applicable"
             ),
         ),
@@ -189,7 +189,7 @@ def _power_state(
             upward_step_a=0.2,
             native_voltage_resolution_v=0.001,
             native_current_resolution_a=0.001,
-            unloaded_hil_safe_measured_current_abs_a=0.001,
+            no_load_test_safe_measured_current_abs_a=0.001,
         ),
         driver_hardware_validation_status=(
             "validated_on_physical_instrument_via_gateway"
@@ -272,33 +272,30 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
     assert state_output_schema is not None
     safety_limits_schema = state_output_schema["$defs"]["PowerSafetyLimits"]
     safe_band_schema = safety_limits_schema["properties"][
-        "unloaded_hil_safe_measured_current_abs_a"
+        "no_load_test_safe_measured_current_abs_a"
     ]
     assert safe_band_schema["minimum"] == 0.001
     assert safe_band_schema["maximum"] == 0.001
-    trip_schema = state_output_schema["$defs"]["UnloadedHilTripRecord"]
+    trip_schema = state_output_schema["$defs"]["NoLoadTestTripRecord"]
     assert trip_schema["anyOf"] == [
-        {"$ref": "#/$defs/OutsideBandUnloadedHilTripRecord"},
-        {"$ref": "#/$defs/UnavailableUnloadedHilTripRecord"},
+        {"$ref": "#/$defs/OutsideBandNoLoadTestTripRecord"},
+        {"$ref": "#/$defs/UnavailableNoLoadTestTripRecord"},
     ]
     outside_current_schema = state_output_schema["$defs"][
-        "OutsideBandUnloadedHilTripRecord"
+        "OutsideBandNoLoadTestTripRecord"
     ]["properties"]["observed_native_channel_current_a"]
     assert outside_current_schema["anyOf"] == [
         {"exclusiveMaximum": -0.001, "type": "number"},
         {"exclusiveMinimum": 0.001, "type": "number"},
     ]
     unavailable_current_schema = state_output_schema["$defs"][
-        "UnavailableUnloadedHilTripRecord"
+        "UnavailableNoLoadTestTripRecord"
     ]["properties"]["observed_native_channel_current_a"]
     assert unavailable_current_schema["type"] == "null"
-    failure_reason_schema = state_output_schema["$defs"]["UnloadedHilInterlockState"][
-        "properties"
-    ]["failure_reason"]
-    assert failure_reason_schema["anyOf"][0]["enum"] == [
-        "persistence_unavailable",
-        "unfinished_pending_operation",
-    ]
+    interlock = state_output_schema["$defs"]["NoLoadTestInterlockState"]["properties"]
+    assert "failure_reason" not in interlock
+    assert "reset_authority" not in interlock
+    assert interlock["status"]["enum"] == ["not_applicable", "unlatched", "latched"]
 
     assert annotations("read_dispenser_power_state").read_only_hint is True
     assert annotations("prepare_dispenser_power").destructive_hint is True
@@ -357,7 +354,7 @@ async def test_set_current_forwards_compare_and_set_values() -> None:
     assert state["commanded_load_current_limit_a"] == 0.2
     assert state["measured_native_channel_current_a"] == 0.1
     assert "measured_load_current_a" not in state
-    assert state["unloaded_hil_interlock"]["status"] == "not_applicable"
+    assert state["no_load_test_interlock"]["status"] == "not_applicable"
 
 
 @pytest.mark.anyio
@@ -420,7 +417,7 @@ async def test_enable_requires_fresh_parallel_confirmation() -> None:
             "enable_dispenser_output",
             {
                 "action_context": action_context(server),
-                "unloaded_hil_connection_confirmation": (
+                "no_load_test_connection_confirmation": (
                     "confirmed_no_dispenser_or_unapproved_load_connected"
                 ),
             },
@@ -450,10 +447,10 @@ async def test_enable_requires_fresh_parallel_confirmation() -> None:
 
 
 @pytest.mark.anyio
-async def test_unloaded_hil_enable_schema_cannot_reuse_production_confirmation() -> (
+async def test_no_load_test_enable_schema_cannot_reuse_production_confirmation() -> (
     None
 ):
-    controller = FakePowerController(acceptance_context="unloaded_hil")
+    controller = FakePowerController(acceptance_context="no_load_test")
     server = create_server(FakePressureSource(), controller)
 
     async with Client(server) as client:
@@ -465,7 +462,7 @@ async def test_unloaded_hil_enable_schema_cannot_reuse_production_confirmation()
         production_literal = await client.call_tool(
             "enable_dispenser_output",
             {
-                "unloaded_hil_connection_confirmation": "confirmed_parallel_ch1",
+                "no_load_test_connection_confirmation": "confirmed_parallel_ch1",
                 "action_context": action_context(server),
             },
         )
@@ -473,7 +470,7 @@ async def test_unloaded_hil_enable_schema_cannot_reuse_production_confirmation()
             "enable_dispenser_output",
             {
                 "action_context": action_context(server),
-                "unloaded_hil_connection_confirmation": (
+                "no_load_test_connection_confirmation": (
                     "confirmed_no_dispenser_or_unapproved_load_connected"
                 ),
             },
@@ -481,10 +478,10 @@ async def test_unloaded_hil_enable_schema_cannot_reuse_production_confirmation()
 
     enable_schema = tools["enable_dispenser_output"].input_schema
     assert set(enable_schema["required"]) == {
-        "unloaded_hil_connection_confirmation",
+        "no_load_test_connection_confirmation",
         "action_context",
     }
-    assert enable_schema["properties"]["unloaded_hil_connection_confirmation"][
+    assert enable_schema["properties"]["no_load_test_connection_confirmation"][
         "const"
     ] == ("confirmed_no_dispenser_or_unapproved_load_connected")
     assert "parallel_connection_confirmation" not in enable_schema["properties"]

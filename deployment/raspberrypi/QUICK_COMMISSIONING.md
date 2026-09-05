@@ -70,11 +70,11 @@ server-issued session/observation IDs. Shutdown still accepts `{}`; an explicit
 
 For a later supervised power run, preserve the fixed 2.4 A native/4.8 A commanded
 load ceilings, exact 0.2 A load upward steps, identity checks, and fresh physical
-wiring confirmation. Unloaded-HIL additionally requires its existing durable
-state initialized outside MCP after physical verification. Its trip, pending
-guard, and operator-only reset boundaries remain in force. See the
+wiring confirmation. No-load test keeps post-action current checks and a process-local stop latch.
+There is no state file or software between-session inspection gate; the nearby
+operator handles physical checks. Explicit shutdown remains available after a trip. See the
 [power contract](../../docs/power-control-contract.md) and
-[acceptance sequence](../../README.md#minimal-unloaded-hil-acceptance-sequence).
+[acceptance sequence](../../README.md#minimal-no-load-test-acceptance-sequence).
 
 ## Updating an existing checkout
 

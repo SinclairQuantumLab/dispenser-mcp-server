@@ -15,13 +15,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .metadata import UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
+from .metadata import NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
 from .observer import Observer
-from .persistence import (
-    InterlockStateError,
-    UnloadedHilInterlockSnapshot,
-    UnloadedHilInterlockStore,
-)
 
 MBAR_TO_TORR = 760.0 / 1013.25
 EPSILON = 1e-9
@@ -83,8 +78,7 @@ class HiddenSimulatorConfig:
     """Startup-only simulator configuration.
 
     A launcher or test harness constructs this object.  No MCP tool exposes a
-    setter for any field. No result returns ``seed``, ``scenario``, an
-    unloaded-HIL state path, or its run handle.
+    setter for any field. No result returns ``seed`` or ``scenario``.
     """
 
     seed: str
@@ -96,8 +90,6 @@ class HiddenSimulatorConfig:
     upward_step_a: float = 0.2
     read_tick_s: float = 15.0
     action_tick_s: float = 1.0
-    unloaded_hil_state_path: str | None = None
-    unloaded_hil_run_handle: str | None = None
     observer_file: str | None = None
 
     def __post_init__(self) -> None:
@@ -105,7 +97,7 @@ class HiddenSimulatorConfig:
             raise ValueError("A non-empty hidden seed is required")
         if self.scenario not in SCENARIOS:
             raise ValueError("Unknown hidden scenario")
-        if self.acceptance_context not in {"production_dispenser", "unloaded_hil"}:
+        if self.acceptance_context not in {"production_dispenser", "no_load_test"}:
             raise ValueError("Unsupported acceptance context")
         if not (0.0 < self.compliance_voltage_v <= 32.0):
             raise ValueError("Compliance voltage must be in (0, 32]")
@@ -115,12 +107,6 @@ class HiddenSimulatorConfig:
             raise ValueError("parallel_ch1 upward step must be exactly 0.2 A")
         if self.read_tick_s <= 0.0 or self.action_tick_s <= 0.0:
             raise ValueError("Virtual time increments must be positive")
-        if (self.unloaded_hil_state_path is None) != (
-            self.unloaded_hil_run_handle is None
-        ):
-            raise ValueError(
-                "Unloaded-HIL state path and run handle must be supplied together"
-            )
 
 
 @dataclass
@@ -145,7 +131,6 @@ class _State:
     enable_attempts: int = 0
     hil_interlock_status: str = "unlatched"
     hil_interlock_trip: dict[str, Any] | None = None
-    hil_interlock_failure_reason: str | None = None
     event_log: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -157,7 +142,6 @@ class SimulatedDispenser:
     def __init__(
         self,
         config: HiddenSimulatorConfig,
-        interlock_store: UnloadedHilInterlockStore | None = None,
     ):
         self.config = config
         self.params = SCENARIOS[config.scenario]
@@ -170,20 +154,6 @@ class SimulatedDispenser:
         self.state.rb_remaining = self.initial_rb
         self.state.impurity_remaining = self.initial_impurity
         self.observer = Observer(config.observer_file)
-        self._interlock_store = interlock_store
-        if config.acceptance_context == "unloaded_hil":
-            if interlock_store is None:
-                raise ValueError(
-                    "Unloaded-HIL simulator runtime requires an interlock store"
-                )
-            snapshot = interlock_store.load()
-            self.state.hil_interlock_status = snapshot.status
-            self.state.hil_interlock_trip = snapshot.trip
-            self.state.hil_interlock_failure_reason = snapshot.failure_reason
-        elif interlock_store is not None:
-            raise ValueError(
-                "Unloaded-HIL interlock store is not valid in production context"
-            )
         self._serial = (
             "SIMULATED-FOREIGN"
             if config.scenario == "identity_mismatch"
@@ -198,7 +168,7 @@ class SimulatedDispenser:
     def confirmation_field(self) -> str:
         if self.config.acceptance_context == "production_dispenser":
             return "parallel_connection_confirmation"
-        return "unloaded_hil_connection_confirmation"
+        return "no_load_test_connection_confirmation"
 
     @property
     def confirmation_literal(self) -> str:
@@ -234,17 +204,15 @@ class SimulatedDispenser:
     def _identity_matches(self) -> bool:
         return self._serial == self._expected_serial
 
-    def _assert_control_ready(self, *, require_topology: bool = True) -> None:
+    def _assert_control_ready(
+        self, *, require_topology: bool = True, allow_latched: bool = False
+    ) -> None:
         if not self.config.control_enabled:
             raise SimulationError("Power control is disabled by startup policy.")
-        if self.config.acceptance_context == "unloaded_hil":
+        if self.config.acceptance_context == "no_load_test" and not allow_latched:
             if self.state.hil_interlock_status == "latched":
                 raise SimulationError(
-                    "Unloaded-HIL measured-current interlock is fail-closed and requires out-of-band human reset."
-                )
-            if self.state.hil_interlock_status == "unavailable_fail_closed":
-                raise SimulationError(
-                    "Unloaded-HIL interlock state is unavailable and control remains fail-closed."
+                    "No-load test current stop is latched for this process; shutdown remains available."
                 )
         if not self._identity_matches():
             raise SimulationError(
@@ -276,11 +244,11 @@ class SimulatedDispenser:
         self.state.prepared = False
 
     def _hil_measured_native_current_a(self) -> float:
-        """Synthetic result of the separate unloaded-HIL current query."""
+        """Synthetic result of the separate no-load test current query."""
 
         if self.config.scenario == "hil_measurement_unavailable":
             raise SimulationError(
-                "Synthetic unloaded-HIL measured-current query is unavailable."
+                "Synthetic no-load test measured-current query is unavailable."
             )
         if self.config.scenario == "hil_measurement_nonfinite":
             return math.nan
@@ -300,68 +268,13 @@ class SimulatedDispenser:
     @staticmethod
     def _hil_measurement_is_in_safe_band(measured_current_a: float) -> bool:
         return math.isfinite(measured_current_a) and (
-            abs(measured_current_a) <= UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
-        )
-
-    def _set_hil_interlock_snapshot(
-        self, snapshot: UnloadedHilInterlockSnapshot
-    ) -> None:
-        self.state.hil_interlock_status = snapshot.status
-        self.state.hil_interlock_trip = snapshot.trip
-        self.state.hil_interlock_failure_reason = snapshot.failure_reason
-
-    def _enter_persistence_unavailable(self) -> None:
-        self._force_energy_reducing_state()
-        self._set_hil_interlock_snapshot(
-            UnloadedHilInterlockSnapshot(
-                status="unavailable_fail_closed",
-                trip=None,
-                failure_reason="persistence_unavailable",
-            )
-        )
-        self._record(
-            "interlock",
-            "synthetic unloaded-HIL persistence unavailable; control fail-closed",
-        )
-
-    def _persist_hil_interlock_snapshot(
-        self, snapshot: UnloadedHilInterlockSnapshot
-    ) -> None:
-        if self._interlock_store is None:
-            self._enter_persistence_unavailable()
-            raise SimulationError(
-                "Unloaded-HIL interlock persistence is unavailable; control remains fail-closed."
-            )
-        try:
-            self._interlock_store.save(snapshot)
-        except InterlockStateError:
-            self._enter_persistence_unavailable()
-            raise SimulationError(
-                "Unloaded-HIL interlock persistence is unavailable; control remains fail-closed."
-            ) from None
-        self._set_hil_interlock_snapshot(snapshot)
-
-    def _begin_mutating_call(self, operation: str) -> None:
-        """Persist a fail-closed write-ahead marker before synthetic mutation."""
-
-        if self.config.acceptance_context != "unloaded_hil":
-            return
-        self._persist_hil_interlock_snapshot(
-            UnloadedHilInterlockSnapshot(
-                status="unavailable_fail_closed",
-                trip=None,
-                failure_reason="unfinished_pending_operation",
-            )
-        )
-        self._record(
-            "interlock",
-            f"synthetic unloaded-HIL {operation} marked pending before mutation",
+            abs(measured_current_a) <= NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
         )
 
     def _complete_mutating_call(self, operation: str) -> None:
-        """Apply the v0.4.3 unloaded-HIL post-mutation interlock check."""
+        """Apply the v0.4.3 no-load test post-mutation interlock check."""
 
-        if self.config.acceptance_context != "unloaded_hil":
+        if self.config.acceptance_context != "no_load_test":
             return
         measured: float | None
         reason: str | None = None
@@ -374,20 +287,13 @@ class SimulatedDispenser:
             if not math.isfinite(measured):
                 measured = None
                 reason = "post_operation_measured_native_current_unavailable"
-            elif abs(measured) > UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A:
+            elif abs(measured) > NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A:
                 reason = "post_operation_measured_native_current_outside_safe_band"
         self._record(
             "interlock",
-            f"synthetic unloaded-HIL post-{operation} safe-band check",
+            f"synthetic no-load test post-{operation} safe-band check",
         )
         if reason is None:
-            self._persist_hil_interlock_snapshot(
-                UnloadedHilInterlockSnapshot(
-                    status="unlatched",
-                    trip=None,
-                    failure_reason=None,
-                )
-            )
             return
 
         trip = {
@@ -396,13 +302,8 @@ class SimulatedDispenser:
             "reason": reason,
             "mutating_operation": operation,
         }
-        self._set_hil_interlock_snapshot(
-            UnloadedHilInterlockSnapshot(
-                status="latched",
-                trip=trip,
-                failure_reason=None,
-            )
-        )
+        self.state.hil_interlock_status = "latched"
+        self.state.hil_interlock_trip = self.state.hil_interlock_trip or trip
 
         # Shutdown happens in the same call before any result can be returned.
         # The fixed safe band is then checked again as a distinct measurement.
@@ -417,38 +318,27 @@ class SimulatedDispenser:
             )
         if final_safe_band_verified:
             detail = (
-                "synthetic unloaded-HIL interlock latched; energy-reducing state "
+                "synthetic no-load test interlock latched; energy-reducing state "
                 "and final safe band verified"
             )
         else:
             detail = (
-                "synthetic unloaded-HIL interlock latched; energy-reducing state "
+                "synthetic no-load test interlock latched; energy-reducing state "
                 "forced but final safe band not verified"
             )
         self._record("interlock", detail)
-        self._persist_hil_interlock_snapshot(
-            UnloadedHilInterlockSnapshot(
-                status="latched",
-                trip=trip,
-                failure_reason=None,
-            )
-        )
         raise SimulationError(
-            "Unloaded-HIL measured-current interlock latched and forced an energy-reducing state; out-of-band human reset is required."
+            "No-load test measured-current interlock latched and forced an energy-reducing state; further energizing is blocked for this process."
         )
 
     def _hil_interlock_result(self) -> dict[str, Any]:
-        applicable = self.config.acceptance_context == "unloaded_hil"
+        applicable = self.config.acceptance_context == "no_load_test"
         return {
             "applicable": applicable,
             "status": (
                 self.state.hil_interlock_status if applicable else "not_applicable"
             ),
             "trip": self.state.hil_interlock_trip if applicable else None,
-            "failure_reason": (
-                self.state.hil_interlock_failure_reason if applicable else None
-            ),
-            "reset_authority": "out_of_band_human_only",
             "validation_status": "synthetic_model_not_hardware_validated",
         }
 
@@ -461,7 +351,7 @@ class SimulatedDispenser:
     def _delivered(self) -> tuple[float, float, float]:
         if (
             not self.state.ch1_output_on
-            or self.config.acceptance_context == "unloaded_hil"
+            or self.config.acceptance_context == "no_load_test"
         ):
             return 0.0, 0.0, 0.0
         current = min(
@@ -660,10 +550,10 @@ class SimulatedDispenser:
         if not self._identity_matches():
             active_faults.append("synthetic_observed_serial_differs_from_expected")
         if self.state.hil_interlock_status == "latched":
-            active_faults.append("synthetic_unloaded_hil_interlock_latched")
+            active_faults.append("synthetic_no_load_test_interlock_latched")
         elif self.state.hil_interlock_status == "unavailable_fail_closed":
             active_faults.append(
-                "synthetic_unloaded_hil_interlock_unavailable_fail_closed"
+                "synthetic_no_load_test_interlock_unavailable_fail_closed"
             )
         result: dict[str, Any] = {
             "observed_at": self._timestamp(),
@@ -710,8 +600,8 @@ class SimulatedDispenser:
                 "native_current_ceiling_a": 2.4,
                 "topology_hardware_load_current_ceiling_a": 6.4,
                 "exact_upward_load_current_step_a": 0.2,
-                "unloaded_hil_safe_measured_current_abs_a": (
-                    UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
+                "no_load_test_safe_measured_current_abs_a": (
+                    NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
                 ),
             },
             "driver_hardware_validation_status": "synthetic_no_driver_or_hardware",
@@ -724,7 +614,7 @@ class SimulatedDispenser:
                 "guard_is_production_contract_feature": False,
             },
             "active_faults": active_faults,
-            "unloaded_hil_interlock": self._hil_interlock_result(),
+            "no_load_test_interlock": self._hil_interlock_result(),
             "verifies_dispenser_activation": False,
         }
         if wrote_hardware is not None:
@@ -744,7 +634,6 @@ class SimulatedDispenser:
     def prepare_dispenser_power(self) -> dict[str, Any]:
         self._call_tick(read=False)
         self._assert_control_ready()
-        self._begin_mutating_call("prepare_dispenser_power")
         self.state.ch1_output_on = False
         self.state.ch2_output_on = False
         self.state.native_ch1_current_setpoint_a = 0.0
@@ -773,7 +662,6 @@ class SimulatedDispenser:
             self.config.compliance_voltage_v,
         ):
             raise SimulationError("Compliance voltage does not match startup policy.")
-        self._begin_mutating_call("enable_dispenser_output")
         self.state.enable_attempts += 1
         self.state.ch1_output_on = True
         if (
@@ -838,7 +726,6 @@ class SimulatedDispenser:
 
         live_native = self.state.native_ch1_current_setpoint_a
         if self._close(live_native, native_target):
-            self._begin_mutating_call("set_dispenser_current")
             self._record("retry", "synthetic compare-and-set replay was write-free")
             self._complete_mutating_call("set_dispenser_current")
             return self._power_result(
@@ -849,7 +736,6 @@ class SimulatedDispenser:
                 "Live commanded current does not match expected_current_a."
             )
 
-        self._begin_mutating_call("set_dispenser_current")
         self.state.native_ch1_current_setpoint_a = native_target
         self._record("write", "synthetic current compare-and-set completed")
         self._complete_mutating_call("set_dispenser_current")
@@ -857,8 +743,7 @@ class SimulatedDispenser:
 
     def shutdown_dispenser_power(self) -> dict[str, Any]:
         self._call_tick(read=False)
-        self._assert_control_ready(require_topology=False)
-        self._begin_mutating_call("shutdown_dispenser_power")
+        self._assert_control_ready(require_topology=False, allow_latched=True)
         self.state.ch1_output_on = False
         self.state.ch2_output_on = False
         self.state.native_ch1_current_setpoint_a = 0.0

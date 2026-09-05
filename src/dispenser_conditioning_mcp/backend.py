@@ -40,7 +40,6 @@ def create_startup_server(
         "expected_serial_number",
         "compliance_voltage_v",
         "control_enabled",
-        "unloaded_hil_state_file",
     }
     if set(document) - allowed:
         raise ConfigurationError("Invalid simulation startup document")

@@ -6,12 +6,11 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, Protocol, Self
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 WORKFLOW_ABSOLUTE_CURRENT_CEILING_A = 4.8
-UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A = 0.001
+NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A = 0.001
 DRIVER_VALIDATION_STATUS = "validated_on_physical_instrument_via_gateway"
 MCP_READ_PATH_VALIDATION_STATUS = (
     "validated_on_physical_instrument_via_authenticated_gateway"
@@ -19,14 +18,14 @@ MCP_READ_PATH_VALIDATION_STATUS = (
 MCP_PRODUCTION_ACTUATION_VALIDATION_STATUS = (
     "not_yet_validated_with_connected_dispenser"
 )
-MCP_UNLOADED_HIL_ACTUATION_VALIDATION_STATUS = (
+MCP_NO_LOAD_TEST_ACTUATION_VALIDATION_STATUS = (
     "validated_on_unloaded_physical_instrument_via_authenticated_gateway"
 )
 PRODUCTION_PARALLEL_CONNECTION_CONFIRMATION = "confirmed_parallel_ch1"
-UNLOADED_HIL_CONFIRMATION = "confirmed_no_dispenser_or_unapproved_load_connected"
+NO_LOAD_TEST_CONFIRMATION = "confirmed_no_dispenser_or_unapproved_load_connected"
 POWER_SOURCE_LABEL = "siglent_spd3000.semantic_driver"
 NativeChannel = Literal["CH1", "CH2"]
-PowerAcceptanceContext = Literal["production_dispenser", "unloaded_hil"]
+PowerAcceptanceContext = Literal["production_dispenser", "no_load_test"]
 PowerMutationOperation = Literal[
     "prepare_dispenser_power",
     "enable_dispenser_output",
@@ -37,24 +36,24 @@ EnableConfirmation = Literal[
     "confirmed_parallel_ch1",
     "confirmed_no_dispenser_or_unapproved_load_connected",
 ]
-BelowUnloadedHilSafeBandCurrent = Annotated[
+BelowNoLoadTestSafeBandCurrent = Annotated[
     float,
     Field(
         strict=True,
         allow_inf_nan=False,
-        lt=-UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A,
+        lt=-NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A,
     ),
 ]
-AboveUnloadedHilSafeBandCurrent = Annotated[
+AboveNoLoadTestSafeBandCurrent = Annotated[
     float,
     Field(
         strict=True,
         allow_inf_nan=False,
-        gt=UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A,
+        gt=NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A,
     ),
 ]
-SignedOutsideUnloadedHilSafeBandCurrent = (
-    BelowUnloadedHilSafeBandCurrent | AboveUnloadedHilSafeBandCurrent
+SignedOutsideNoLoadTestSafeBandCurrent = (
+    BelowNoLoadTestSafeBandCurrent | AboveNoLoadTestSafeBandCurrent
 )
 
 
@@ -174,13 +173,13 @@ class PowerSupplySessionFactory(Protocol):
         raise NotImplementedError
 
 
-class OutsideBandUnloadedHilTripRecord(BaseModel):
+class OutsideBandNoLoadTestTripRecord(BaseModel):
     """Immutable current-format trip record for one signed outside-band measurement."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     observed_at: datetime = Field(description="UTC timestamp of trip detection.")
-    observed_native_channel_current_a: SignedOutsideUnloadedHilSafeBandCurrent
+    observed_native_channel_current_a: SignedOutsideNoLoadTestSafeBandCurrent
     reason: Literal["post_operation_measured_native_current_outside_safe_band"]
     operation: PowerMutationOperation
 
@@ -188,13 +187,13 @@ class OutsideBandUnloadedHilTripRecord(BaseModel):
     def require_outside_band_observation(self) -> Self:
         if (
             abs(self.observed_native_channel_current_a)
-            <= UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
+            <= NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
         ):
             raise ValueError("trip current must be outside the fixed safe band")
         return self
 
 
-class UnavailableUnloadedHilTripRecord(BaseModel):
+class UnavailableNoLoadTestTripRecord(BaseModel):
     """Immutable current-format trip record for an unavailable measured-current query."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -205,13 +204,13 @@ class UnavailableUnloadedHilTripRecord(BaseModel):
     operation: PowerMutationOperation
 
 
-UnloadedHilTripPayload = (
-    OutsideBandUnloadedHilTripRecord | UnavailableUnloadedHilTripRecord
+NoLoadTestTripPayload = (
+    OutsideBandNoLoadTestTripRecord | UnavailableNoLoadTestTripRecord
 )
 
 
-class UnloadedHilTripRecord(RootModel[UnloadedHilTripPayload]):
-    """Structurally strict union of every durable unloaded-HIL trip variant."""
+class NoLoadTestTripRecord(RootModel[NoLoadTestTripPayload]):
+    """Structurally strict union of current no-load test trip variants."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -224,7 +223,7 @@ class UnloadedHilTripRecord(RootModel[UnloadedHilTripPayload]):
         operation: PowerMutationOperation,
     ) -> Self:
         return cls(
-            root=OutsideBandUnloadedHilTripRecord(
+            root=OutsideBandNoLoadTestTripRecord(
                 observed_at=observed_at,
                 observed_native_channel_current_a=observed_native_channel_current_a,
                 reason="post_operation_measured_native_current_outside_safe_band",
@@ -240,7 +239,7 @@ class UnloadedHilTripRecord(RootModel[UnloadedHilTripPayload]):
         operation: PowerMutationOperation,
     ) -> Self:
         return cls(
-            root=UnavailableUnloadedHilTripRecord(
+            root=UnavailableNoLoadTestTripRecord(
                 observed_at=observed_at,
                 observed_native_channel_current_a=None,
                 reason="post_operation_measured_native_current_unavailable",
@@ -263,59 +262,6 @@ class UnloadedHilTripRecord(RootModel[UnloadedHilTripPayload]):
     @property
     def operation(self) -> PowerMutationOperation:
         return self.root.operation
-
-
-class UnloadedHilPendingOperationRecord(BaseModel):
-    """Durable write-ahead marker established before a device session opens."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    record_type: Literal["pending_operation"]
-    operation_id: UUID
-    started_at: datetime = Field(description="UTC timestamp before device access.")
-    operation: PowerMutationOperation
-
-
-@dataclass(frozen=True)
-class UnloadedHilDurableState:
-    """Trusted provider snapshot for one trip-or-operation state file."""
-
-    trip: UnloadedHilTripRecord | None
-    pending_operation: UnloadedHilPendingOperationRecord | None
-
-
-class UnloadedHilDurableStateProvider(Protocol):
-    """Narrow operation/trip state surface; reset deliberately belongs elsewhere."""
-
-    def read_state(self) -> UnloadedHilDurableState:
-        """Return the durable trip/pending state, failing closed if unreadable."""
-
-        raise NotImplementedError
-
-    def begin_operation(
-        self,
-        *,
-        operation: PowerMutationOperation,
-        started_at: datetime,
-    ) -> UnloadedHilPendingOperationRecord:
-        """Durably mark one mutation before any device session can open."""
-
-        raise NotImplementedError
-
-    def complete_operation(
-        self,
-        pending: UnloadedHilPendingOperationRecord,
-        *,
-        completed_at: datetime,
-    ) -> None:
-        """Commit safe completion after the post-operation current check."""
-
-        raise NotImplementedError
-
-    def record_trip(self, record: UnloadedHilTripRecord) -> None:
-        """Persist the first trip without providing any reset/delete operation."""
-
-        raise NotImplementedError
 
 
 class PowerController(Protocol):
@@ -360,11 +306,11 @@ class PowerSafetyLimits(BaseModel):
     upward_step_a: float = Field(gt=0, le=0.2)
     native_voltage_resolution_v: float = Field(gt=0)
     native_current_resolution_a: float = Field(gt=0)
-    unloaded_hil_safe_measured_current_abs_a: float = Field(ge=0.001, le=0.001)
+    no_load_test_safe_measured_current_abs_a: float = Field(ge=0.001, le=0.001)
 
 
-class UnloadedHilInterlockState(BaseModel):
-    """Read-only diagnostic view of the startup-bound unloaded-HIL latch."""
+class NoLoadTestInterlockState(BaseModel):
+    """Read-only diagnostic view of the process-local no-load test latch."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -373,13 +319,8 @@ class UnloadedHilInterlockState(BaseModel):
         "not_applicable",
         "unlatched",
         "latched",
-        "unavailable_fail_closed",
     ]
-    trip: UnloadedHilTripRecord | None
-    failure_reason: (
-        Literal["persistence_unavailable", "unfinished_pending_operation"] | None
-    ) = None
-    reset_authority: Literal["out_of_band_human_only"] = "out_of_band_human_only"
+    trip: NoLoadTestTripRecord | None
     validation_status: Literal[
         "not_applicable",
         "offline_simulation_only_not_retested_on_physical_instrument",
@@ -413,7 +354,7 @@ class DispenserPowerState(BaseModel):
     regulation_mode: str
     compliance_voltage_matches: bool
     prepared_for_enable: bool
-    unloaded_hil_interlock: UnloadedHilInterlockState
+    no_load_test_interlock: NoLoadTestInterlockState
     safety_limits: PowerSafetyLimits
     driver_hardware_validation_status: Literal[
         "validated_on_physical_instrument_via_gateway"
@@ -435,8 +376,8 @@ def mcp_actuation_validation_status(
 ]:
     """Return the physical validation status for one acceptance context."""
 
-    if acceptance_context == "unloaded_hil":
-        return MCP_UNLOADED_HIL_ACTUATION_VALIDATION_STATUS
+    if acceptance_context == "no_load_test":
+        return MCP_NO_LOAD_TEST_ACTUATION_VALIDATION_STATUS
     return MCP_PRODUCTION_ACTUATION_VALIDATION_STATUS
 
 
@@ -462,4 +403,4 @@ def required_enable_confirmation(
 
     if acceptance_context == "production_dispenser":
         return PRODUCTION_PARALLEL_CONNECTION_CONFIRMATION
-    return UNLOADED_HIL_CONFIRMATION
+    return NO_LOAD_TEST_CONFIRMATION

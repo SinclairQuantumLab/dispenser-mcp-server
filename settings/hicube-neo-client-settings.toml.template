@@ -1,5 +1,7 @@
-# HiCube Neo OPC UA settings. The client implementation is vendored in this repo.
-# Replace `<HOST>` placeholder with the IP address or hostname of a HiCube NEO turbo pump
+# Real backend only; copy to hicube-neo-client-settings.toml. Simulation does not read this file.
+# Required OPC UA host: HiCube Neo IP address or hostname, not a URL; replace with the actual pump host.
 host = "<HOST>"
+# OPC UA TCP port: integer 1..65535, default 4840; change only if the pump uses a different port.
 port = 4840
+# Request timeout in seconds: 0.1..60, default 5; adjust for the instrument/network response time.
 timeout_s = 5.0

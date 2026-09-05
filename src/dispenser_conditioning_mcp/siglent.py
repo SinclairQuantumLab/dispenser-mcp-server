@@ -19,17 +19,18 @@ from dispenser_conditioning_mcp.config import (
     PARALLEL_NATIVE_CURRENT_CEILING_A,
     SiglentConfiguration,
 )
-from dispenser_conditioning_mcp.interlock import FileUnloadedHilDurableStateProvider
 from dispenser_conditioning_mcp.power_domain import (
     DRIVER_VALIDATION_STATUS,
     MCP_READ_PATH_VALIDATION_STATUS,
+    NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A,
     POWER_SOURCE_LABEL,
-    UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A,
     WORKFLOW_ABSOLUTE_CURRENT_CEILING_A,
     DeviceIdentity,
     DispenserPowerState,
     EnableConfirmation,
     NativeChannel,
+    NoLoadTestInterlockState,
+    NoLoadTestTripRecord,
     PowerAcceptanceContext,
     PowerActionResult,
     PowerControlError,
@@ -38,10 +39,6 @@ from dispenser_conditioning_mcp.power_domain import (
     PowerSupplySession,
     PowerSupplySessionFactory,
     RawChannelState,
-    UnloadedHilDurableStateProvider,
-    UnloadedHilInterlockState,
-    UnloadedHilPendingOperationRecord,
-    UnloadedHilTripRecord,
     mcp_actuation_validation_status,
     required_enable_confirmation,
 )
@@ -49,8 +46,8 @@ from dispenser_conditioning_mcp.power_domain import (
 _IMPORT_LOCK = threading.Lock()
 
 
-class _HandledUnloadedHilSafetyFailure(PowerControlError):
-    """Mark a durable-safety failure whose shutdown has already been attempted."""
+class _HandledNoLoadTestSafetyFailure(PowerControlError):
+    """Mark a current-check failure whose shutdown has already been attempted."""
 
 
 class SiglentDriverSession:
@@ -186,7 +183,6 @@ class DispenserPowerController:
         configuration: SiglentConfiguration,
         *,
         session_factory: PowerSupplySessionFactory | None = None,
-        durable_state_provider: UnloadedHilDurableStateProvider | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._configuration = configuration
@@ -195,26 +191,7 @@ class DispenserPowerController:
         )
         self._clock = clock or (lambda: datetime.now(UTC))
         self._lock = threading.RLock()
-        self._interlock_failure_reason: Literal["persistence_unavailable"] | None = None
-        self._active_pending_operation: UnloadedHilPendingOperationRecord | None = None
-        if configuration.acceptance_context == "unloaded_hil":
-            if durable_state_provider is not None:
-                self._durable_state_provider = durable_state_provider
-            elif configuration.unloaded_hil_state_file is not None:
-                self._durable_state_provider = FileUnloadedHilDurableStateProvider(
-                    configuration.unloaded_hil_state_file
-                )
-            else:
-                raise ValueError(
-                    "unloaded_hil requires a durable operation/trip state provider"
-                )
-        else:
-            if durable_state_provider is not None:
-                raise ValueError(
-                    "a durable unloaded-HIL state provider is invalid outside "
-                    "unloaded_hil"
-                )
-            self._durable_state_provider = None
+        self._trip: NoLoadTestTripRecord | None = None
 
     @property
     def acceptance_context(self) -> PowerAcceptanceContext:
@@ -417,14 +394,9 @@ class DispenserPowerController:
                 raise PowerControlError(
                     "Power control is disabled by operator startup policy."
                 )
-            self._require_interlock_allows_mutation()
-            pending = self._begin_unloaded_hil_operation(operation_name)
-            self._active_pending_operation = pending
-            try:
-                session = self._open_session()
-            except Exception:
-                self._active_pending_operation = None
-                raise
+            if operation_name != "shutdown_dispenser_power":
+                self._require_interlock_allows_mutation()
+            session = self._open_session()
             write_started = False
             try:
                 identity = session.read_identity()
@@ -467,21 +439,12 @@ class DispenserPowerController:
 
                 tracked = WriteTrackingSession()
                 result = operation(tracked, identity)  # type: ignore[arg-type]
-                if (
-                    self._configuration.acceptance_context == "unloaded_hil"
-                    and result.state.unloaded_hil_interlock.status != "unlatched"
-                ):
-                    raise PowerControlError(
-                        "Unloaded-HIL interlock state became unavailable during the "
-                        "power action. Control is fail-closed."
-                    )
-                self._enforce_unloaded_hil_safe_current_band(
+                self._enforce_no_load_test_safe_current_band(
                     session,
                     operation=result.action,
                 )
-                self._complete_unloaded_hil_operation(pending, session)
                 return result
-            except _HandledUnloadedHilSafetyFailure:
+            except _HandledNoLoadTestSafetyFailure:
                 raise
             except PowerControlError as error:
                 if write_started:
@@ -523,7 +486,6 @@ class DispenserPowerController:
                 ) from error
             finally:
                 _close_quietly(session)
-                self._active_pending_operation = None
 
     def _open_session(self) -> PowerSupplySession:
         try:
@@ -632,67 +594,14 @@ class DispenserPowerController:
         return outputs_verified_off and currents_verified_zero
 
     def _require_interlock_allows_mutation(self) -> None:
-        state = self._unloaded_hil_interlock_state()
+        state = self._no_load_test_interlock_state()
         if state.status == "latched":
             raise PowerControlError(
-                "The unloaded-HIL interlock is latched. Mutating power requests are "
-                "blocked until an out-of-band human emergency reset is completed."
-            )
-        if state.status == "unavailable_fail_closed":
-            raise PowerControlError(
-                "Unloaded-HIL interlock state is unavailable. Mutating power "
-                "requests are fail-closed; inspect local operator diagnostics."
+                "The no-load test interlock is latched. Mutating power requests are "
+                "blocked for this process; shutdown remains available."
             )
 
-    def _begin_unloaded_hil_operation(
-        self,
-        operation: PowerMutationOperation,
-    ) -> UnloadedHilPendingOperationRecord | None:
-        if self._configuration.acceptance_context != "unloaded_hil":
-            return None
-        try:
-            assert self._durable_state_provider is not None
-            return self._durable_state_provider.begin_operation(
-                operation=operation,
-                started_at=self._clock().astimezone(UTC),
-            )
-        except Exception as error:
-            self._interlock_failure_reason = "persistence_unavailable"
-            raise PowerControlError(
-                "The unloaded-HIL pending operation could not be established "
-                "durably. Device access was rejected and control is fail-closed."
-            ) from error
-
-    def _complete_unloaded_hil_operation(
-        self,
-        pending: UnloadedHilPendingOperationRecord | None,
-        session: PowerSupplySession,
-    ) -> None:
-        if pending is None:
-            return
-        try:
-            assert self._durable_state_provider is not None
-            self._durable_state_provider.complete_operation(
-                pending,
-                completed_at=self._clock().astimezone(UTC),
-            )
-        except Exception as error:
-            self._interlock_failure_reason = "persistence_unavailable"
-            shutdown_verified = self._best_effort_shutdown(session)
-            raise _HandledUnloadedHilSafetyFailure(
-                (
-                    "The unloaded-HIL safe-completion marker could not be committed. "
-                    "Both outputs off and both current setpoints zero were verified, "
-                    "but control remains durably fail-closed for operator review."
-                    if shutdown_verified
-                    else "The unloaded-HIL safe-completion marker could not be "
-                    "committed. Output state may be unknown; physical verification "
-                    "or hardware shutdown is required. Control remains fail-closed."
-                ),
-                uncertain_output=True,
-            ) from error
-
-    def _enforce_unloaded_hil_safe_current_band(
+    def _enforce_no_load_test_safe_current_band(
         self,
         session: PowerSupplySession,
         *,
@@ -703,7 +612,7 @@ class DispenserPowerController:
             "shutdown_dispenser_power",
         ],
     ) -> None:
-        if self._configuration.acceptance_context != "unloaded_hil":
+        if self._configuration.acceptance_context != "no_load_test":
             return
         try:
             measured_current_a = session.read_measured_current_a()
@@ -711,10 +620,10 @@ class DispenserPowerController:
             self._raise_measurement_unavailable(session, operation=operation)
         if not math.isfinite(measured_current_a):
             self._raise_measurement_unavailable(session, operation=operation)
-        if abs(measured_current_a) <= UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A:
+        if abs(measured_current_a) <= NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A:
             return
 
-        record = UnloadedHilTripRecord.outside_safe_band(
+        record = NoLoadTestTripRecord.outside_safe_band(
             observed_at=self._clock().astimezone(UTC),
             observed_native_channel_current_a=measured_current_a,
             operation=operation,
@@ -726,48 +635,21 @@ class DispenserPowerController:
                 shutdown_verified = (
                     math.isfinite(recovery_current_a)
                     and abs(recovery_current_a)
-                    <= UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
+                    <= NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
                 )
             except Exception:
                 shutdown_verified = False
 
-        persistence_verified = False
-        try:
-            assert self._durable_state_provider is not None
-            self._durable_state_provider.record_trip(record)
-            persistence_verified = (
-                self._durable_state_provider.read_state().trip == record
-            )
-        except Exception:
-            self._interlock_failure_reason = "persistence_unavailable"
-            persistence_verified = False
-
-        if persistence_verified and shutdown_verified:
-            message = (
-                "The unloaded-HIL interlock tripped after measured current exceeded "
-                "the fixed safe band. Both outputs off, both current setpoints zero, "
-                "and measured current within the fixed safe band were verified. "
-                "Further control is latched until "
-                "an out-of-band human emergency reset is completed."
-            )
-        elif persistence_verified:
-            message = (
-                "The unloaded-HIL interlock tripped after measured current exceeded "
-                "the fixed safe band. Output state may be unknown; physical verification or "
-                "hardware shutdown is required. Further control is latched until "
-                "an out-of-band human emergency reset is completed."
-            )
-        else:
-            message = (
-                "Measured current outside the fixed safe band triggered the "
-                "unloaded-HIL interlock, "
-                "but durable trip persistence could not be verified. Control is "
-                "fail-closed; physical verification or hardware shutdown and local "
-                "operator review are required."
-            )
-        raise _HandledUnloadedHilSafetyFailure(
-            message,
-            uncertain_output=not (persistence_verified and shutdown_verified),
+        self._trip = self._trip or record
+        raise _HandledNoLoadTestSafetyFailure(
+            "No-load test current exceeded the safe band. Further energizing is "
+            "blocked for this process; shutdown remains available. "
+            + (
+                "Both outputs off, zero setpoints and recovery current were verified."
+                if shutdown_verified
+                else "Output state is uncertain; physical verification or hardware shutdown is required."
+            ),
+            uncertain_output=not shutdown_verified,
         )
 
     def _raise_measurement_unavailable(
@@ -781,7 +663,7 @@ class DispenserPowerController:
             "shutdown_dispenser_power",
         ],
     ) -> NoReturn:
-        record = UnloadedHilTripRecord.measurement_unavailable(
+        record = NoLoadTestTripRecord.measurement_unavailable(
             observed_at=self._clock().astimezone(UTC),
             operation=operation,
         )
@@ -792,96 +674,35 @@ class DispenserPowerController:
                 shutdown_verified = (
                     math.isfinite(recovery_current_a)
                     and abs(recovery_current_a)
-                    <= UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
+                    <= NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
                 )
             except Exception:
                 shutdown_verified = False
 
-        persistence_verified = False
-        try:
-            assert self._durable_state_provider is not None
-            self._durable_state_provider.record_trip(record)
-            persistence_verified = (
-                self._durable_state_provider.read_state().trip == record
-            )
-        except Exception:
-            self._interlock_failure_reason = "persistence_unavailable"
-        raise _HandledUnloadedHilSafetyFailure(
-            (
-                "The unloaded-HIL measured-current check was unavailable or "
-                "non-finite and was durably latched. Both outputs off, both current "
-                "setpoints zero, and recovery current within the fixed safe band "
-                "were verified."
-                if persistence_verified and shutdown_verified
-                else "The unloaded-HIL measured-current check was unavailable or "
-                "non-finite. Recovery was verified, but durable latch persistence "
-                "was not; control remains fail-closed for this process."
+        self._trip = self._trip or record
+        raise _HandledNoLoadTestSafetyFailure(
+            "No-load test current measurement was unavailable or non-finite. "
+            "Further energizing is blocked for this process; shutdown remains available. "
+            + (
+                "Both outputs off, zero setpoints and recovery current were verified."
                 if shutdown_verified
-                else "The unloaded-HIL measured-current check was unavailable or "
-                "non-finite. Control is fail-closed; output state may be unknown, "
-                "so physical verification or hardware shutdown is required."
+                else "Output state is uncertain; physical verification or hardware shutdown is required."
             ),
-            uncertain_output=not (persistence_verified and shutdown_verified),
+            uncertain_output=not shutdown_verified,
         )
 
-    def _unloaded_hil_interlock_state(self) -> UnloadedHilInterlockState:
-        if self._configuration.acceptance_context != "unloaded_hil":
-            return UnloadedHilInterlockState(
-                applicable=False,
-                status="not_applicable",
-                trip=None,
-                validation_status="not_applicable",
-            )
-        if self._interlock_failure_reason is not None:
-            return UnloadedHilInterlockState(
-                applicable=True,
-                status="unavailable_fail_closed",
-                trip=None,
-                failure_reason=self._interlock_failure_reason,
-                validation_status=(
-                    "offline_simulation_only_not_retested_on_physical_instrument"
-                ),
-            )
-        try:
-            assert self._durable_state_provider is not None
-            durable_state = self._durable_state_provider.read_state()
-        except Exception:
-            self._interlock_failure_reason = "persistence_unavailable"
-            return UnloadedHilInterlockState(
-                applicable=True,
-                status="unavailable_fail_closed",
-                trip=None,
-                failure_reason="persistence_unavailable",
-                validation_status=(
-                    "offline_simulation_only_not_retested_on_physical_instrument"
-                ),
-            )
-        if durable_state.trip is not None:
-            return UnloadedHilInterlockState(
-                applicable=True,
-                status="latched",
-                trip=durable_state.trip,
-                validation_status=(
-                    "offline_simulation_only_not_retested_on_physical_instrument"
-                ),
-            )
-        pending = durable_state.pending_operation
-        if pending is not None and pending != self._active_pending_operation:
-            return UnloadedHilInterlockState(
-                applicable=True,
-                status="unavailable_fail_closed",
-                trip=None,
-                failure_reason="unfinished_pending_operation",
-                validation_status=(
-                    "offline_simulation_only_not_retested_on_physical_instrument"
-                ),
-            )
-        return UnloadedHilInterlockState(
-            applicable=True,
-            status="unlatched",
-            trip=None,
+    def _no_load_test_interlock_state(self) -> NoLoadTestInterlockState:
+        applicable = self._configuration.acceptance_context == "no_load_test"
+        return NoLoadTestInterlockState(
+            applicable=applicable,
+            status=("latched" if self._trip else "unlatched")
+            if applicable
+            else "not_applicable",
+            trip=self._trip if applicable else None,
             validation_status=(
                 "offline_simulation_only_not_retested_on_physical_instrument"
+                if applicable
+                else "not_applicable"
             ),
         )
 
@@ -925,7 +746,7 @@ class DispenserPowerController:
             regulation_mode=raw.regulation_mode,
             compliance_voltage_matches=compliance_voltage_matches,
             prepared_for_enable=prepared,
-            unloaded_hil_interlock=self._unloaded_hil_interlock_state(),
+            no_load_test_interlock=self._no_load_test_interlock_state(),
             safety_limits=PowerSafetyLimits(
                 control_enabled=self._configuration.control_enabled,
                 acceptance_context=self._configuration.acceptance_context,
@@ -945,8 +766,8 @@ class DispenserPowerController:
                 upward_step_a=self._configuration.upward_step_a,
                 native_voltage_resolution_v=self._native_voltage_resolution,
                 native_current_resolution_a=self._native_current_resolution,
-                unloaded_hil_safe_measured_current_abs_a=(
-                    UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
+                no_load_test_safe_measured_current_abs_a=(
+                    NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
                 ),
             ),
             driver_hardware_validation_status=DRIVER_VALIDATION_STATUS,

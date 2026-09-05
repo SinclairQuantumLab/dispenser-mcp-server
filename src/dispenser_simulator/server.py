@@ -16,7 +16,6 @@ from .model import (
     SimulatedDispenser,
     ToolRouter,
 )
-from .persistence import FileUnloadedHilInterlockStore
 
 
 def config_from_environment(
@@ -34,15 +33,6 @@ def config_from_environment(
     acceptance_context = env.get(
         "DISPENSER_SIM_ACCEPTANCE_CONTEXT", "production_dispenser"
     )
-    unloaded_hil_state_path: str | None = None
-    unloaded_hil_run_handle: str | None = None
-    if acceptance_context == "unloaded_hil":
-        unloaded_hil_state_path = env.get("DISPENSER_SIM_UNLOADED_HIL_STATE_PATH", "")
-        unloaded_hil_run_handle = env.get("DISPENSER_SIM_UNLOADED_HIL_RUN_HANDLE", "")
-        if not unloaded_hil_state_path or not unloaded_hil_run_handle:
-            raise RuntimeError(
-                "Unloaded-HIL startup requires operator-bound interlock state."
-            )
     try:
         return HiddenSimulatorConfig(
             seed=seed,
@@ -56,8 +46,6 @@ def config_from_environment(
             max_load_current_a=float(
                 env.get("DISPENSER_SIM_MAX_LOAD_CURRENT_A", "4.8")
             ),
-            unloaded_hil_state_path=unloaded_hil_state_path,
-            unloaded_hil_run_handle=unloaded_hil_run_handle,
             observer_file=env.get("DISPENSER_SIM_OBSERVER_FILE") or None,
         )
     except (TypeError, ValueError):
@@ -67,20 +55,7 @@ def config_from_environment(
 def build_runtime(
     config: HiddenSimulatorConfig,
 ) -> tuple[ToolRouter, list[dict[str, Any]]]:
-    interlock_store = None
-    if config.acceptance_context == "unloaded_hil":
-        if (
-            config.unloaded_hil_state_path is None
-            or config.unloaded_hil_run_handle is None
-        ):
-            raise RuntimeError(
-                "Unloaded-HIL startup requires operator-bound interlock state."
-            )
-        interlock_store = FileUnloadedHilInterlockStore(
-            config.unloaded_hil_state_path,
-            config.unloaded_hil_run_handle,
-        )
-    simulator = SimulatedDispenser(config, interlock_store=interlock_store)
+    simulator = SimulatedDispenser(config)
     return ToolRouter(simulator), tool_specs(config.acceptance_context)
 
 

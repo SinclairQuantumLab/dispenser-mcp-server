@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+import math
 import secrets
 import sys
+import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from html import escape
 from urllib.parse import parse_qs
 
+from coolname import generate_slug, replace_random
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
@@ -20,12 +24,14 @@ Endpoint = Callable[[Request], Awaitable[Response]]
 
 class DashboardAccess:
     def __init__(self) -> None:
-        self.token = secrets.token_urlsafe(32)
+        replace_random(secrets.SystemRandom())
+        self.token = f"{generate_slug(2)}-{secrets.randbelow(100):02d}"
         self.cookie = secrets.token_urlsafe(32)
+        self.failed_logins: deque[float] = deque(maxlen=5)
 
     def announce(self) -> None:
         print(
-            f"Operator dashboard access code (valid until restart): {self.token}",
+            f"Operator dashboard access phrase (valid until restart): {self.token}",
             file=sys.stderr,
         )
 
@@ -62,17 +68,35 @@ class DashboardAccess:
 
     async def login(self, request: Request) -> Response:
         if request.method == "POST":
+            now = time.monotonic()
+            while self.failed_logins and now - self.failed_logins[0] >= 60:
+                self.failed_logins.popleft()
+            if len(self.failed_logins) >= 5:
+                return Response(
+                    "Too many incorrect phrases; try again shortly.",
+                    status_code=429,
+                    headers={
+                        "Retry-After": str(
+                            max(1, math.ceil(60 - (now - self.failed_logins[0])))
+                        ),
+                        "Cache-Control": "no-store",
+                    },
+                )
             body = bytearray()
             async for part in request.stream():
                 body.extend(part)
                 if len(body) > 4096:
                     return Response("Login request too large", status_code=413)
-            supplied = parse_qs(body.decode("utf-8", errors="replace")).get(
-                "code", [""]
-            )[0]
+            supplied = (
+                parse_qs(body.decode("utf-8", errors="replace"))
+                .get("code", [""])[0]
+                .strip()
+                .lower()
+            )
             if not hmac.compare_digest(supplied.encode(), self.token.encode()):
+                self.failed_logins.append(time.monotonic())
                 return HTMLResponse(
-                    self.login_page("Invalid access code."),
+                    self.login_page("Invalid access phrase."),
                     status_code=401,
                     headers={"Cache-Control": "no-store"},
                 )
@@ -94,15 +118,15 @@ class DashboardAccess:
     @staticmethod
     def login_page(message: str) -> str:
         return (
-            '<!doctype html><html lang="en"><title>Operator dashboard login</title><h1>Operator dashboard login</h1><p>Ask the operator for this server’s current dashboard access code. This login does not authorize MCP or hardware control.</p><p>'
+            '<!doctype html><html lang="en"><title>Operator dashboard login</title><h1>Operator dashboard login</h1><p>Ask the operator for this server’s current dashboard access phrase. This login does not authorize MCP or hardware control.</p><p>'
             + escape(message)
-            + '</p><form method="post" action="/dashboard/login"><label>Access code <input name="code" type="password" required autocomplete="off"></label><button>Open dashboard</button></form></html>'
+            + '</p><form method="post" action="/dashboard/login"><label>Access phrase <input name="code" type="password" required autocomplete="off"></label><button>Open dashboard</button></form></html>'
         )
 
     async def operator(self, request: Request) -> Response:
         if not self.local(request):
             return Response(
-                "Access code is shown only on server loopback", status_code=403
+                "Access phrase is shown only on server loopback", status_code=403
             )
         return HTMLResponse(
             '<!doctype html><html lang="en"><title>Dashboard operator access</title><h1>Dashboard operator access</h1><p>Share this code only with the human operator. It is reusable until this HTTP process restarts, not a single-use code.</p><code>'

@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from .metadata import UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
+from .metadata import NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A
 
 READ_ANNOTATIONS = {
     "readOnlyHint": True,
@@ -158,7 +158,7 @@ def _enable_schema(acceptance_context: str) -> dict[str, Any]:
             "the simulator cannot authenticate its provenance."
         )
     else:
-        field = "unloaded_hil_connection_confirmation"
+        field = "no_load_test_connection_confirmation"
         literal = "confirmed_no_dispenser_or_unapproved_load_connected"
         description = (
             "Caller attestation after a fresh human physical-state check that "
@@ -242,11 +242,11 @@ def _power_output_schema() -> dict[str, Any]:
                 "anyOf": [
                     {
                         "type": "number",
-                        "exclusiveMaximum": -UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A,
+                        "exclusiveMaximum": -NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A,
                     },
                     {
                         "type": "number",
-                        "exclusiveMinimum": UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A,
+                        "exclusiveMinimum": NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A,
                     },
                 ],
             },
@@ -257,7 +257,7 @@ def _power_output_schema() -> dict[str, Any]:
         },
         "required": common_trip_required,
         "additionalProperties": False,
-        "title": "UnloadedHilInterlockOutsideSafeBandTrip",
+        "title": "NoLoadTestInterlockOutsideSafeBandTrip",
     }
     unavailable_trip_schema: dict[str, Any] = {
         "type": "object",
@@ -271,7 +271,7 @@ def _power_output_schema() -> dict[str, Any]:
         },
         "required": common_trip_required,
         "additionalProperties": False,
-        "title": "UnloadedHilInterlockUnavailableTrip",
+        "title": "NoLoadTestInterlockUnavailableTrip",
     }
     trip_record_schema: dict[str, Any] = {
         "oneOf": [
@@ -295,73 +295,41 @@ def _power_output_schema() -> dict[str, Any]:
                     "not_applicable",
                     "unlatched",
                     "latched",
-                    "unavailable_fail_closed",
                 ],
             },
             "trip": trip_schema,
-            "failure_reason": {
-                "type": ["string", "null"],
-                "enum": [
-                    None,
-                    "persistence_unavailable",
-                    "unfinished_pending_operation",
-                ],
-            },
-            "reset_authority": {
-                "type": "string",
-                "const": "out_of_band_human_only",
-            },
             "validation_status": {"type": "string"},
         },
         "required": [
             "applicable",
             "status",
             "trip",
-            "failure_reason",
-            "reset_authority",
             "validation_status",
         ],
         "additionalProperties": False,
         "oneOf": [
             {
-                "title": "UnloadedHilInterlockNotApplicable",
+                "title": "NoLoadTestInterlockNotApplicable",
                 "properties": {
                     "applicable": {"const": False},
                     "status": {"const": "not_applicable"},
                     "trip": {"type": "null"},
-                    "failure_reason": {"type": "null"},
                 },
             },
             {
-                "title": "UnloadedHilInterlockUnlatched",
+                "title": "NoLoadTestInterlockUnlatched",
                 "properties": {
                     "applicable": {"const": True},
                     "status": {"const": "unlatched"},
                     "trip": {"type": "null"},
-                    "failure_reason": {"type": "null"},
                 },
             },
             {
-                "title": "UnloadedHilInterlockLatched",
+                "title": "NoLoadTestInterlockLatched",
                 "properties": {
                     "applicable": {"const": True},
                     "status": {"const": "latched"},
                     "trip": trip_record_schema,
-                    "failure_reason": {"type": "null"},
-                },
-            },
-            {
-                "title": "UnloadedHilInterlockUnavailableFailClosed",
-                "properties": {
-                    "applicable": {"const": True},
-                    "status": {"const": "unavailable_fail_closed"},
-                    "trip": {"type": "null"},
-                    "failure_reason": {
-                        "enum": [
-                            "persistence_unavailable",
-                            "unfinished_pending_operation",
-                        ]
-                    },
                 },
             },
         ],
@@ -409,9 +377,9 @@ def _power_output_schema() -> dict[str, Any]:
                 "native_current_ceiling_a": {"type": "number"},
                 "topology_hardware_load_current_ceiling_a": {"type": "number"},
                 "exact_upward_load_current_step_a": {"type": "number"},
-                "unloaded_hil_safe_measured_current_abs_a": {
+                "no_load_test_safe_measured_current_abs_a": {
                     "type": "number",
-                    "const": UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A,
+                    "const": NO_LOAD_TEST_SAFE_MEASURED_CURRENT_ABS_A,
                 },
             },
             "required": [
@@ -424,7 +392,7 @@ def _power_output_schema() -> dict[str, Any]:
                 "native_current_ceiling_a",
                 "topology_hardware_load_current_ceiling_a",
                 "exact_upward_load_current_step_a",
-                "unloaded_hil_safe_measured_current_abs_a",
+                "no_load_test_safe_measured_current_abs_a",
             ],
             "additionalProperties": False,
         },
@@ -449,7 +417,7 @@ def _power_output_schema() -> dict[str, Any]:
             "additionalProperties": False,
         },
         "active_faults": {"type": "array", "items": {"type": "string"}},
-        "unloaded_hil_interlock": interlock_schema,
+        "no_load_test_interlock": interlock_schema,
         "verifies_dispenser_activation": {"type": "boolean", "const": False},
         "wrote_hardware": {"type": "boolean", "const": False},
         "write_was_synthetic": {"type": "boolean", "const": True},
@@ -473,7 +441,7 @@ def _power_output_schema() -> dict[str, Any]:
 def tool_specs(acceptance_context: str) -> list[dict[str, Any]]:
     """Return the six production-named tools with closed startup-bound schemas."""
 
-    if acceptance_context not in {"production_dispenser", "unloaded_hil"}:
+    if acceptance_context not in {"production_dispenser", "no_load_test"}:
         raise ValueError("Unsupported acceptance context")
 
     return [

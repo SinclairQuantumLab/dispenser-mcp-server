@@ -1,5 +1,9 @@
-# py-siglent-spd3000 authenticated gateway settings.
-# Replace `<IDENTIFIER>` placeholder with the IP address of a py-siglent-spd3000 gateway server
+# Real backend only; copy to gateway-settings.toml. Simulation does not read this file.
+# Required authenticated gateway identifier: nonempty string, at most 512 characters.
+# Set to the gateway host/IP accepted by py-siglent-spd3000, NOT a direct PSU connection.
 identifier = "<IDENTIFIER>"
+# Gateway timeout in seconds: 0.1..60, default 5; adjust for instrument/network response time.
 timeout_s = 5.0
+# Minimum spacing between commands in milliseconds: 10..100, default 100.
+# Keep 100 unless a deliberately tested deployment requires a shorter interval.
 minimum_command_interval_ms = 100.0

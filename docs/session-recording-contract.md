@@ -63,8 +63,7 @@ supplied with shutdown is ignored, not validated. Ordinary logger failure
 cannot block the attempt or convert a successful shutdown into a hardware
 failure. Its intent event is explicitly marked as recorded after dispatch.
 
-This does not bypass the existing controller's startup control-enable, identity,
-or durable unloaded-HIL restrictions. Those can still reject shutdown. The
+This does not bypass the existing controller's startup control-enable and target-identity restrictions. The process-local no-load stop does not block shutdown. The
 tool remains software shutdown, not a universally available physical E-stop.
 
 After any successful action, failed post-call recording leaves the original
@@ -236,7 +235,7 @@ The model's original dynamics/clock and standalone stdio defaults are unchanged.
 
 Pilot session metadata/events and simulator observer snapshots do not emit a
 schema_version tag. Readers keep content and session/run association checks.
-Development uses one coordinated current format, including durable HIL records;
+Development uses one coordinated current format.
 there is no legacy migration or normalization. Historical files stay untouched,
-but readability across development format changes is not promised. Actual HIL
-state is never cleared or reinitialized automatically.
+but readability across development format changes is not promised. Existing historical/operational files are untouched;
+the active no-load latch is process-local.

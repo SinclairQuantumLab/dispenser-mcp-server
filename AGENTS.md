@@ -48,7 +48,7 @@
 - For the `production_dispenser` acceptance context, require fresh human
   confirmation of physical parallel CH1 dispenser wiring with
   `confirmed_parallel_ch1` immediately before enabling output.
-- For the `unloaded_hil` acceptance context, require fresh human confirmation
+- For the `no_load_test` acceptance context, require fresh human confirmation
   that no dispenser or unapproved load is connected with
   `confirmed_no_dispenser_or_unapproved_load_connected` immediately before
   enabling output. Operator-approved metrology wiring, including a voltmeter or
@@ -72,37 +72,22 @@
 - If `parallel_ch1` shutdown or post-write recovery runs after live mode drift,
   command and verify both CH1 and CH2 outputs off before zeroing and verifying
   both native current setpoints.
-- Under `unloaded_hil`, perform a separate measured-current query after every
+- Under `no_load_test`, perform a separate measured-current query after every
   completed mutating operation, including a valid write-free compare-and-set
   replay. A finite value in the inclusive fixed `[-0.001 A, +0.001 A]` band is
   accepted. One finite sample outside the band, any non-finite value, or any
-  read/unavailable error must durably latch, run verified two-channel shutdown,
-  and reject later mutations before device access. Do not add averaging or
+  read/unavailable error must latch for this process, run verified two-channel
+  shutdown, and reject later energizing before device access. Explicit OFF is allowed. Do not add averaging or
   energized debounce. Keep the threshold and latch context/path/reset/bypass
   outside MCP inputs.
-- Before any unloaded-HIL mutating request opens a device session, the protected
-  durable-state provider must commit both the primary pending-operation record
-  and its separately durable pending guard. Publish a completed-operation or
-  trip record only while the guard remains authoritative, and retire the guard
-  only after the safe replacement is durably published and verified. Any
-  unfinished marker or guard, crash, uncertain write, trip persistence failure,
-  or reported completion failure must deny mutation before device access after
-  restart.
-- Treat a missing durable HIL state file as not operator-initialized and
-  fail-closed. Each host deployment must provide a separately protected,
-  out-of-band initializer using atomic no-overwrite creation after physical
-  output verification; the MCP process cannot bootstrap or recreate it.
-- The protected durable-state provider may begin/complete normal operations and
-  record the first trip, but it must have no reset/delete method. Human
-  out-of-band reset and future physical-button integration remain outside this
-  process.
-- On Windows, retry atomic durable-state replacement only for the bounded known
-  transient sharing errors. Never retry general permission/path failures. Trip
-  persistence retries must occur after hardware shutdown, and exhaustion must
-  preserve the prior pending state and fail closed.
+- No-load stop memory is process-local. Do not add durable state, pending guards,
+  startup inspection, arming or reset acknowledgement gates. The co-located human
+  handles between-session checks. Explicit shutdown bypasses the stop latch,
+  but still checks operator control authorization and target identity.
+
 - Accept only actual JSON integer/float values for model-facing numeric mutation
   inputs. Never coerce strings or booleans into current values.
-- Software shutdown and the unloaded-HIL software latch are not a physical
+- Software shutdown and the no-load test software latch are not a physical
   emergency stop, watchdog, or guarantee of power removal.
 - Always serve Streamable HTTP at the fixed /mcp path. Main settings expose only
   allow_remote_access (strict boolean, default false) and port (default 8000).
@@ -112,7 +97,7 @@
 - Reject browser Origin headers only on /mcp for the native-client pilot; retain local Host
   checks and bounded request bodies. Remote exposure is the operator's choice.
 - During a live run, the execution agent uses MCP tools. The operator owns
-  process administration, credentials, and interlock initialization/reset.
+  process administration, credentials, and between-session physical checks.
   Development work may inspect and edit source and use ordinary diagnostics.
 - Preserve one writer per physical PSU.
 - Historical hardened Windows/Pi deployment material is reference-only and
@@ -158,7 +143,8 @@
 - Normal prepare/enable/set require action_context; keep shutdown callable with
   no context. Attempt shutdown before ordinary recording. Preserve the existing
   controller identity/control-enable/HIL restrictions; do not conflate the
-  ordinary session logger with the durable HIL safety state provider.
+  ordinary session logger with the removed durable safety state. Normal controls
+  require pre-dispatch decision/intent recording; shutdown attempts precede logging.
 - Retain semantic structured results. Put record identifiers/status in MCP
   metadata and an agent-visible text block. Post-call logging failure must
   preserve the hardware result and must not suggest repeating a control action.
@@ -175,7 +161,7 @@
   children of runs/. Never change the active recorder, start/stop acquisition,
   or expose arbitrary browser-selected paths. Saved-only preview has no live view.
 - Guard every dashboard page/data/asset route with the startup-scoped operator
-  access boundary. Leave /mcp independent. Show access codes only on actual
+  access boundary. Leave /mcp independent. Show access phrases only on actual
   socket-loopback operator pages and HTTP startup terminal, never MCP results,
   records or URLs. Disable proxy_headers on owned HTTP entrypoints. This excludes
   uncredentialed remote tool-only agents, not same-host full-access agents or
@@ -192,9 +178,9 @@
   settings before pulling the one-time tracked-to-template migration.
 - Pilot session/event/observer records need no single-format schema_version tag.
   Preserve structural/association checks. Use one current format across settings,
-  records and durable HIL state; do not add legacy dispatch or normalization.
+  records; do not add legacy dispatch or normalization.
   Update code and development fixtures together. Never clear/reinitialize actual
-  operational latch, pending or guard files as part of a format edit.
+  existing operational/historical data as part of code edits.
 - Remote update workflow: modify locally, push, then root asks the operator to
   pull and restart. Do not add compatibility layers for stale remote code or
   administer the remote host as a substitute for the operator's deployment.

@@ -1,12 +1,25 @@
-# Copy to mcp-settings.toml on the simulator host; operator-only configuration.
-# Disclosed connectivity example, not a hidden scientific evaluation scenario.
+# Copy to mcp-settings.toml for an internal simulation; no live instrument settings/auth are needed.
+# This is a disclosed connectivity example, not a hidden scientific evaluation scenario.
+# Backend is "simulation" here; "real" selects actual instruments (default if omitted). No fallback.
 backend = "simulation"
+# Strict true/false, default false: loopback only; true listens on all IPv4 interfaces for remote clients.
 allow_remote_access = false
+# Integer TCP port 1024..65535, default 8000; change for a port conflict. MCP /mcp and dashboard share it.
 port = 8000
 
 [simulation]
-# These are runnable, disclosed example values; choose operator-only values for a blind run.
+# Required nonempty reproducibility seed string, no HTTP default. Operator chooses it before the process starts.
+# Keep seed/scenario private from an agent in a blind simulation.
 seed = "operator-connectivity-example"
+# Required scenario name, no HTTP default. Normal examples: nominal_recovery, slow_recovery,
+# persistent_total_pressure, leak_rise, overpressure_guard.
+# Fault/test options: gauge_dropout, topology_drift, enable_verification_fault, identity_mismatch,
+# hil_current_trip, hil_current_negative_trip, hil_current_positive_boundary,
+# hil_current_negative_boundary, hil_measurement_unavailable, hil_measurement_nonfinite.
+# Choose an operator test case; these names select model behavior, not a conditioning decision policy.
 scenario = "nominal_recovery"
+# Simulation mutations: strict true/false, default true. Set false to test read-only operation.
 control_enabled = true
-compliance_voltage_v = 1.0 # Synthetic test policy, NOT an approved live voltage.
+# Simulation fixed compliance in numeric volts: >0 through 32, HTTP default 1.0.
+# This synthetic test value is NOT an approved live voltage; no real equipment is contacted.
+compliance_voltage_v = 1.0

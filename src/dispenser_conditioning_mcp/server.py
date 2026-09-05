@@ -18,8 +18,8 @@ from dispenser_conditioning_mcp.domain import (
     normalize_observation,
 )
 from dispenser_conditioning_mcp.power_domain import (
+    NO_LOAD_TEST_CONFIRMATION,
     PRODUCTION_PARALLEL_CONNECTION_CONFIRMATION,
-    UNLOADED_HIL_CONFIRMATION,
     DispenserPowerState,
     PowerAcceptanceContext,
     PowerActionResult,
@@ -141,7 +141,7 @@ def create_server(
     confirmation_argument = (
         "parallel_connection_confirmation"
         if acceptance_context == "production_dispenser"
-        else "unloaded_hil_connection_confirmation"
+        else "no_load_test_connection_confirmation"
     )
     tool_arguments[ENABLE_OUTPUT_TOOL] = frozenset(
         {confirmation_argument, "action_context"}
@@ -332,9 +332,9 @@ def _register_enable_tool(
         title="Enable unloaded HIL output",
         annotations=annotations,
     )
-    def enable_unloaded_hil_output(  # pyright: ignore[reportUnusedFunction]
+    def enable_no_load_test_output(  # pyright: ignore[reportUnusedFunction]
         action_context: ActionContext,
-        unloaded_hil_connection_confirmation: Annotated[
+        no_load_test_connection_confirmation: Annotated[
             Literal["confirmed_no_dispenser_or_unapproved_load_connected"],
             Field(
                 description=(
@@ -346,14 +346,14 @@ def _register_enable_tool(
             ),
         ],
     ) -> PowerActionResult:
-        """Enable after fresh confirmation of only approved unloaded-HIL wiring."""
+        """Enable after fresh confirmation of only approved no-load test wiring."""
 
-        if unloaded_hil_connection_confirmation != UNLOADED_HIL_CONFIRMATION:
+        if no_load_test_connection_confirmation != NO_LOAD_TEST_CONFIRMATION:
             raise ToolError(
-                "Fresh human unloaded-HIL connection confirmation is required."
+                "Fresh human no-load test connection confirmation is required."
             )
         return _power_call(
-            lambda: power_controller.enable(confirmation=UNLOADED_HIL_CONFIRMATION)
+            lambda: power_controller.enable(confirmation=NO_LOAD_TEST_CONFIRMATION)
         )
 
 
@@ -376,7 +376,7 @@ def _server_instructions(acceptance_context: PowerAcceptanceContext) -> str:
             "Never use this "
             "context for a connected dispenser. After every mutating power operation, "
             "a separate measured-current query must remain within the inclusive fixed "
-            "-0.001 A to +0.001 A safe band or a durable interlock trips and rejects "
+            "-0.001 A to +0.001 A safe band or a process-local stop trips and rejects "
             "later mutations. The read-only power "
             "state exposes latch diagnostics. Reset is strictly out-of-band and is not "
             "available through MCP."

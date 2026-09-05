@@ -42,20 +42,13 @@ def _write_layout(
     layout.siglent_gateway_auth_file.write_text(
         'token = "offline-fixture"\n', encoding="utf-8"
     )
-    state_setting = ""
-    if acceptance_context == "unloaded_hil":
-        state_directory = tmp_path / "protected state"
-        state_directory.mkdir()
-        state_setting = (
-            f'unloaded_hil_state_file = "{state_directory.as_posix()}/state.json"\n'
-        )
     layout.mcp_settings_file.write_text(
         (
             f'acceptance_context = "{acceptance_context}"\n'
             'expected_serial_number = "SPD-OFFLINE"\n'
             "compliance_voltage_v = 10.0\n"
             f"control_enabled = {str(control_enabled).lower()}\n"
-            f"{state_setting}{main_extra}"
+            f"{main_extra}"
         ),
         encoding="utf-8",
     )
@@ -201,31 +194,19 @@ def test_device_settings_reject_placeholders_and_wrong_types(
         OperatorConfiguration.from_toml(layout)
 
 
-def test_unloaded_hil_requires_operator_owned_absolute_state_path(
-    tmp_path: Path,
-) -> None:
-    layout = _write_layout(tmp_path, acceptance_context="unloaded_hil")
+def test_no_load_test_needs_no_state_file(tmp_path: Path) -> None:
+    layout = _write_layout(tmp_path, acceptance_context="no_load_test")
     configuration = OperatorConfiguration.from_toml(layout)
-    assert configuration.siglent.unloaded_hil_state_file is not None
-    assert configuration.siglent.unloaded_hil_state_file.is_absolute()
-
-    text = layout.mcp_settings_file.read_text(encoding="utf-8")
-    text = "\n".join(
-        line
-        for line in text.splitlines()
-        if not line.startswith("unloaded_hil_state_file")
-    )
-    layout.mcp_settings_file.write_text(text + "\n", encoding="utf-8")
-    with pytest.raises(ConfigurationError, match="required for unloaded_hil"):
-        OperatorConfiguration.from_toml(layout)
+    assert configuration.siglent.acceptance_context == "no_load_test"
+    assert not (layout.project_root / "state").exists()
 
 
-def test_production_context_rejects_unloaded_state_path(tmp_path: Path) -> None:
+def test_operator_state_path_override_is_rejected(tmp_path: Path) -> None:
     layout = _write_layout(
         tmp_path,
-        main_extra=f'unloaded_hil_state_file = "{tmp_path.as_posix()}/state.json"\n',
+        main_extra=f'no_load_test_state_file = "{tmp_path.as_posix()}/state.json"\n',
     )
-    with pytest.raises(ConfigurationError, match="only valid for unloaded_hil"):
+    with pytest.raises(ConfigurationError, match="unknown setting"):
         OperatorConfiguration.from_toml(layout)
 
 

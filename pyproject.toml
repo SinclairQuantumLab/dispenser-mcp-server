@@ -13,6 +13,7 @@ dependencies = [
     "mcp>=2.0,<3",
     "pydantic>=2.12,<3",
     "py-siglent-spd3000",
+    "coolname==5.0.0",
 ]
 
 [tool.uv.sources]

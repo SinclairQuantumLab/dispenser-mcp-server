@@ -8,3 +8,6 @@ contract and scenario behavior; coordinate through root and keep the decision
 specialist isolated from hidden simulator configuration and internal state.
 Backend selection/HTTP integration belong to the MCP engineer. Relocation alone
 does not authorize changing dynamics, bounds, interlocks or scientific semantics.
+No-load stop state is process-local. Do not add startup inspection/reset gates or
+durable authorization files; the nearby human handles between-session checks.
+Keep current-band checks and automatic OFF, and allow explicit OFF after a trip.

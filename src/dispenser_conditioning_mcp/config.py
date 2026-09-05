@@ -95,7 +95,6 @@ class McpStartupConfiguration:
     control_enabled: bool = False
     allow_remote_access: bool = False
     port: int = 8000
-    unloaded_hil_state_file: Path | None = None
 
     @classmethod
     def from_toml(cls, layout: SourceLayout) -> McpStartupConfiguration:
@@ -113,7 +112,6 @@ class McpStartupConfiguration:
                 "control_enabled",
                 "allow_remote_access",
                 "port",
-                "unloaded_hil_state_file",
             },
             "MCP settings",
         )
@@ -124,7 +122,7 @@ class McpStartupConfiguration:
             _choice(
                 document.get("acceptance_context"),
                 name="acceptance_context",
-                choices=("production_dispenser", "unloaded_hil"),
+                choices=("production_dispenser", "no_load_test"),
             ),
         )
         expected_serial_number = _required_text(
@@ -152,10 +150,6 @@ class McpStartupConfiguration:
         port = _integer(
             document.get("port", 8000), name="port", minimum=1024, maximum=65535
         )
-        unloaded_hil_state_file = _unloaded_hil_state_file(
-            document.get("unloaded_hil_state_file"),
-            acceptance_context=acceptance_context,
-        )
         return cls(
             acceptance_context=acceptance_context,
             expected_serial_number=expected_serial_number,
@@ -163,7 +157,6 @@ class McpStartupConfiguration:
             control_enabled=control_enabled,
             allow_remote_access=allow_remote_access,
             port=port,
-            unloaded_hil_state_file=unloaded_hil_state_file,
         )
 
 
@@ -224,7 +217,6 @@ class SiglentConfiguration:
     max_load_current_a: float
     upward_step_a: float
     control_enabled: bool
-    unloaded_hil_state_file: Path | None = None
     timeout_s: float = DEFAULT_SIGLENT_TIMEOUT_S
     min_command_interval_ms: float = DEFAULT_SIGLENT_COMMAND_INTERVAL_MS
 
@@ -280,7 +272,6 @@ class SiglentConfiguration:
             max_load_current_a=PARALLEL_LOAD_CURRENT_CEILING_A,
             upward_step_a=PARALLEL_LOAD_UPWARD_STEP_A,
             control_enabled=startup.control_enabled,
-            unloaded_hil_state_file=startup.unloaded_hil_state_file,
             timeout_s=_number(
                 document.get("timeout_s", DEFAULT_SIGLENT_TIMEOUT_S),
                 name="timeout_s",
@@ -336,42 +327,6 @@ def _read_toml(path: Path, label: str) -> dict[str, object]:
 def _closed_keys(document: Mapping[str, object], allowed: set[str], label: str) -> None:
     if set(document) - allowed:
         raise ConfigurationError(f"{label} contains an unknown setting.")
-
-
-def _unloaded_hil_state_file(
-    raw_value: object,
-    *,
-    acceptance_context: PowerAcceptanceContext,
-) -> Path | None:
-    if acceptance_context == "production_dispenser":
-        if raw_value is not None:
-            raise ConfigurationError(
-                "unloaded_hil_state_file is only valid for unloaded_hil."
-            )
-        return None
-    if raw_value is None:
-        raise ConfigurationError(
-            "unloaded_hil_state_file is required for unloaded_hil."
-        )
-    value = _required_text(
-        raw_value, name="unloaded_hil_state_file", maximum_length=1024
-    )
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        raise ConfigurationError("unloaded_hil_state_file must be absolute.")
-    if path.name in {"", ".", ".."} or path.suffix.lower() != ".json":
-        raise ConfigurationError(
-            "unloaded_hil_state_file must identify a JSON record file."
-        )
-    if not path.parent.is_dir():
-        raise ConfigurationError(
-            "unloaded_hil_state_file must have an existing parent directory."
-        )
-    if path.is_symlink() or (path.exists() and not path.is_file()):
-        raise ConfigurationError(
-            "unloaded_hil_state_file must identify a regular non-symlink file."
-        )
-    return path.resolve()
 
 
 def _host(raw_value: object) -> str:

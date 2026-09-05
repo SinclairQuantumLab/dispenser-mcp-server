@@ -23,7 +23,7 @@ reported separately:
 ```
 
 The actuation status is selected by the startup-bound acceptance context. The
-unloaded-HIL path was physically exercised before the durable interlock was
+no-load test path was physically exercised before the durable interlock was
 introduced; the v0.4.3 interlock is separately labeled offline-only in its
 structured diagnostics. This interface does not implement a conditioning state
 machine, pressure trip, activation inference, persistent output lease, watchdog,
@@ -35,8 +35,7 @@ the separate MCP recording adapter.
 Startup TOML must bind the exact expected serial, one acceptance context, one
 fixed compliance voltage, and an explicit control-enable flag. The expected
 model, topology, channel, current ceilings, and upward step are contract
-constants. `unloaded_hil` additionally requires one absolute protected
-`unloaded_hil_state_file` in `settings/mcp-settings.toml`.
+constants. No-load stop memory lasts only for the current process.
 The MCP client cannot read or change connection details and cannot change any
 policy value.
 
@@ -62,7 +61,7 @@ The accepted startup contexts are deliberately distinct:
 | Acceptance context | Intended physical state | Advertised confirmation input | Required literal |
 | --- | --- | --- | --- |
 | `production_dispenser` | Approved dispenser wired to parallel CH1 output | `parallel_connection_confirmation` | `confirmed_parallel_ch1` |
-| `unloaded_hil` | No dispenser or unapproved load connected; operator-approved metrology wiring may be present | `unloaded_hil_connection_confirmation` | `confirmed_no_dispenser_or_unapproved_load_connected` |
+| `no_load_test` | No dispenser or unapproved load connected; operator-approved metrology wiring may be present | `no_load_test_connection_confirmation` | `confirmed_no_dispenser_or_unapproved_load_connected` |
 
 Each server instance advertises only the input selected at startup. The other
 field is rejected as an unknown property, and the controller independently
@@ -90,12 +89,11 @@ measurements, output/regulation, `compliance_voltage_matches`, prepared state,
 fixed safety limits, driver hardware-validation status, MCP read-path validation
 status, and MCP actuation-validation status. Fixed safety limits include the
 startup acceptance context, its required enable-confirmation literal, and the
-fixed `unloaded_hil_safe_measured_current_abs_a=0.001` threshold.
-The state also includes a read-only `unloaded_hil_interlock` object. Production
-reports `not_applicable`. Unloaded HIL reports `unlatched`, `latched`, or
-`unavailable_fail_closed`, the immutable first trip when present, reset authority
-`out_of_band_human_only`, and an explicit offline-only interlock validation
-status. Reading diagnostics never creates, updates, or clears latch state.
+fixed `no_load_test_safe_measured_current_abs_a=0.001` threshold.
+The state also includes a read-only `no_load_test_interlock` object. Production
+reports `not_applicable`. No-load test reports `unlatched` or `latched`, with
+its first trip when present and an explicit offline-only validation status.
+The latch lasts only for this process. Reading diagnostics never creates, updates, or clears latch state.
 
 Annotations: read-only true, destructive false, idempotent true, open-world
 true.
@@ -127,15 +125,15 @@ Production-dispenser input:
 {"parallel_connection_confirmation":"confirmed_parallel_ch1"}
 ```
 
-Unloaded-HIL input:
+No-load test input:
 
 ```json
-{"unloaded_hil_connection_confirmation":"confirmed_no_dispenser_or_unapproved_load_connected"}
+{"no_load_test_connection_confirmation":"confirmed_no_dispenser_or_unapproved_load_connected"}
 ```
 
 The production literal may be supplied only after asking the human operator
 immediately before the call to verify the approved physical parallel CH1
-dispenser wiring. The unloaded-HIL literal may be supplied only after asking the
+dispenser wiring. The no-load test literal may be supplied only after asking the
 human immediately before the call to verify that no dispenser or unapproved load
 is connected. Operator-approved metrology wiring, including a voltmeter or no
 wiring, may be present. Instrument tracking mode cannot verify either physical
@@ -207,99 +205,21 @@ This is software shutdown—not an emergency-stop circuit, watchdog, or guarante
 of power removal. If communication or verification fails, an operator must use
 physical verification or hardware shutdown.
 
-## Unloaded-HIL post-operation interlock
+## No-load test post-operation interlock
 
-Before any unloaded-HIL mutating request can open a device session, the protected
-provider atomically commits a pending-operation record. If that write or readback
-cannot be established, the request is rejected before device access. For this
-contract, a mutating power operation is prepare, enable, compare-and-set current
-(including a valid write-free replay), or shutdown. After a successful operation,
-the controller makes a distinct fresh native-CH1 measured-current query.
-Production context does not apply this no-load invariant.
+No-load tests check fresh finite native current after each completed mutation
+against the inclusive ±0.001 A band. An outside-band or unavailable reading
+triggers best-effort verified two-channel output OFF, then zero current, and a
+process-local stop latch. Subsequent energizing is blocked in that process;
+explicit shutdown remains available with operator control authorization and
+matching instrument identity. An uncertain shutdown is reported, never assumed
+successful or automatically retried.
 
-A finite native CH1 measurement in the inclusive fixed band
-`[-0.001 A, +0.001 A]` passes. One finite sample with `abs(I) > 0.001 A`, positive
-or negative, trips immediately; no averaging or energized debounce is applied.
-A query error, unavailable result, or non-finite value also trips fail-closed,
-including after a valid write-free compare-and-set replay. The controller uses
-the already-durable pending record and performs recovery in this order:
-
-1. command CH1 and CH2 outputs off in one verified semantic batch;
-2. query and verify both outputs off;
-3. command both native current setpoints to zero in one verified semantic batch;
-4. query and verify both current setpoints zero; and
-5. query measured native current again and require a finite value inside the same
-   inclusive fixed band before reporting verified recovery; and
-6. replace the pending record with the structurally valid trip record.
-
-Hardware shutdown therefore does not wait for trip-record persistence. Before
-device access, the provider durably publishes both the primary pending record
-and a separate pending guard in the same protected directory. If trip
-replacement fails, either pending representation remains fail-closed. Only when
-the original operation succeeds and its fresh measured-current query is finite
-and in-band does the provider publish, directory-sync, and verify a
-completed-operation record before retiring the guard. The primary state file is
-never deleted during normal MCP operation.
-
-The `0.001 A` absolute threshold is a hard-coded MCP safety policy and appears in
-structured safety limits; it is not model- or startup-configurable. It matches one
-SPD3303X current resolution increment, but does not establish the absence of a
-physical load and is not a representation of the instrument's wider published
-readback-current accuracy. Fresh-sample physical characterization is a future
-supervised acceptance item, not a reason to weaken the immediate single-sample
-trip outside this band.
-
-The tool returns a sanitized explicit interlock error rather than a normal
-result. If any hardware check or durable-state commit is uncertain,
-it does not report a safe result and requires physical verification or hardware
-shutdown. After a durable trip, every later mutating request—including software
-shutdown—is rejected before a device session opens; the trip call has already
-attempted two-channel shutdown in its original session. Read-only power
-diagnostics remain available. If latch state cannot be read or the current
-process could not persist a trip, diagnostics report
-`unavailable_fail_closed` and mutation remains denied. An unfinished pending
-record after restart also reports `unavailable_fail_closed` with
-`failure_reason="unfinished_pending_operation"` and rejects mutation before a
-session opens.
-
-Trip records use one current unversioned shape. Numeric outside-band records
-require reason `post_operation_measured_native_current_outside_safe_band` and a
-finite signed current below -0.001 A or above +0.001 A. Unavailable records require
-reason `post_operation_measured_native_current_unavailable` and a null current.
-Legacy nonzero-only records are not accepted. Invalid persisted combinations
-fail closed; no file is automatically migrated, cleared or reinitialized.
-
-The protected provider exposes read-state, begin-operation, complete-operation,
-and first-trip recording responsibilities; it has no reset, clear, delete, or
-bypass method. No tool schema includes context, state path, or reset control.
-Reset belongs to an out-of-band human emergency procedure and a future physical
-button/reset service. With the current protected local-file backend, production
-ACLs/process isolation must allow the MCP process to manage the state record while
-denying the execution agent direct filesystem access. Removing or replacing a
-trip or unfinished pending record is an out-of-band privileged reset, never an
-MCP action. Physical-button integration remains pending.
-
-The local-file backend stages and `fsync`s a new primary record before atomic
-replacement. A separately `fsync`ed pending guard remains authoritative while a
-safe completed/trip replacement is published and verified. If completion
-publication reports any error—including failure of the POSIX parent-directory
-`fsync` after `os.replace`—a fresh provider observes the surviving guard as an
-unfinished operation and denies mutation before device access. After a safe
-replacement is durable, a lost guard-deletion update can only resurrect the
-guard after a crash and cause a conservative fail-closed restart; it cannot
-create a false unlatched state.
-
-Windows can transiently deny replacement while a scanner holds a
-non-delete-sharing handle. The backend retries only `WinError 5`, `32`, and `33`
-with fixed delays of 5, 10, 20, and 40 ms. General permission, path, validation,
-and persistence errors are not retried. Pending-marker retries happen before a
-device session can open. Trip-record retries happen only after both outputs are
-verified off, both native current setpoints are verified zero, and recovery
-current is in-band, so they cannot delay trip shutdown. Exhaustion preserves the
-previous pending state and the controller remains fail-closed. The guard filename
-is derived internally from the operator-bound state path and is not configurable
-through MCP. A privileged out-of-band reset must treat the primary state and any
-surviving guard as one safety-state boundary after physical verification.
+There is no durable safety file, pending guard, initializer, reset acknowledgement,
+or startup inspection gate. A new process starts unlatched. The human beside
+the instruments handles between-session inspection and state checks. Ordinary
+run records preserve observations and requests, not control authorization.
+No software check runs continuously or guarantees OFF after process death.
 
 ## Error and lifecycle behavior
 
@@ -333,7 +253,7 @@ tracking-mode change, network discovery/configuration, save/recall, waveform,
 timer, gateway administration, device lock, policy mutation, latch-path
 selection, interlock reset, or bypass.
 
-## Minimal unloaded-HIL acceptance sequence
+## Minimal no-load test acceptance sequence
 
 The recommended first-run procedure uses an operator-approved 1.0 V fixed
 compliance voltage and only one 0.2 A commanded-load step. Parallel tracking mode must be set
@@ -341,14 +261,13 @@ out-of-band with outputs off because MCP intentionally exposes no tracking
 control.
 
 After a control-disabled identity/topology read, restart with the same
-`unloaded_hil` policy and control enabled. Prepare, re-read, obtain fresh human
+`no_load_test` policy and control enabled. Prepare, re-read, obtain fresh human
 confirmation that no dispenser or unapproved load is connected and that any
 present metrology wiring is operator-approved, enable at zero current, re-read,
 compare-and-set one exact 0.2 A commanded-load step, re-read, decrease to zero,
 shutdown, and perform a final read. This is supervised interface acceptance only;
 it does not validate dispenser conditioning behavior or activation.
 
-The protected state path must be bound before startup and diagnostics must show
 `unlatched`. This v0.4.3 interlock has not yet been exercised on physical
 hardware; fresh human connection confirmation and a separate reviewed test plan
 are required before another live actuation.

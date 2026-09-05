@@ -40,9 +40,9 @@ forwarding may be used but is not required for control-enabled startup.
 Startup validates local configuration without connecting to instruments.
 The six hardware tools plus one non-actuating declaration tool are served.
 The identity checks, physical enable confirmations, fixed
-current ceilings and steps, and unloaded-HIL durable interlock/reset boundaries
+current ceilings and steps, and no-load test process-local stop behavior
 are unchanged. Keep one writer per physical PSU. The operator owns live process
-administration, credentials, and initialization/reset; the execution agent uses
+administration, credentials, and between-session physical checks; the execution agent uses
 MCP tools during the run.
 
 Operator diagnostics may show useful nonsecret settings, paths, endpoints, and
