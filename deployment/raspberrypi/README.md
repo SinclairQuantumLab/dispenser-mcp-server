@@ -5,7 +5,7 @@
 > [QUICK_COMMISSIONING.md](QUICK_COMMISSIONING.md): update the pinned Git
 > submodule, run `uv sync`, configure, and start control-disabled.
 > The service units and `*.env.template` profiles below target the archived
-> 0.5.1 environment interface and do not configure package 0.6.0. They require a
+> 0.5.1 environment interface and do not configure package 0.6.1. They require a
 > reviewed TOML migration before use.
 
 This is the primary deployment path for `dispenser-conditioning-mcp` 0.5.1.

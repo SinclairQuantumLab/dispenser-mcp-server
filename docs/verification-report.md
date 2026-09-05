@@ -1,19 +1,19 @@
 # Verification Report
 
-> **Current R&D startup note:** Package 0.6.0 loads three strict TOML settings
+> **Current R&D startup note:** Package 0.6.1 loads three strict TOML settings
 > files from the source checkout and derives the vendored HiCube client,
 > parent-pinned Siglent submodule source, and untracked authentication path.
 > It installs all declared dependencies through `uv sync`. Environment-profile,
 > built-wheel deployment, and release-manifest passages below record earlier
 > deployment-hardening work and are not the current research startup path.
 
-Date: 2026-09-04 (America/Chicago)
+Date: 2026-09-05 (America/Chicago)
 
 ## Verified build
 
 - Python 3.13 under `uv`
 - MCP Python SDK 2.1.1, default stdio plus loopback Streamable HTTP startup
-- Package `dispenser-conditioning-mcp` 0.6.0 TOML operator-interface candidate
+- Package `dispenser-conditioning-mcp` 0.6.1 TOML operator-interface candidate
 - Public six-tool MCP contract remains v0.4.3 with identical schemas, literals,
   structured results, and power-safety semantics
 - Platform-independent wheel and source distribution
@@ -29,8 +29,8 @@ uv lock --check                  PASS
 uv run ruff format --check .    PASS
 uv run ruff check .             PASS
 uv run pyright                  PASS (0 errors, 0 warnings)
-uv run pytest -q                PASS (213 tests)
-uv build                        PASS (sdist and wheel)
+uv run pytest -q                PASS (227 tests)
+uv build --offline              PASS (0.6.1 sdist and wheel)
 isolated wheel/import smoke     PASS
 exact 37-distribution inventory PASS
 packed stdio/deployment smoke   PASS (6 tests)
@@ -53,7 +53,7 @@ publication, and repeated successful operations. The six-tool public contract
 was unchanged by this internal crash-consistency repair. Package 0.6.0 later
 changed only the operator configuration interface.
 
-The 0.6.0 TOML tests cover closed schemas, strict TOML types, placeholder and
+The 0.6.1 TOML tests cover closed schemas, strict TOML types, placeholder and
 missing-value rejection, safe stdio/control-disabled defaults, context-bound
 absolute unloaded-HIL state, fixed repository source/auth paths, and sanitized
 parse errors. A source-checkout stdio process built from generated offline TOML
@@ -61,7 +61,11 @@ fixtures advertised six tools and completed both read calls. Inspector strict
 `tools/list` used offline identifiers and did not invoke a device tool. The
 source distribution contained all four tracked settings/templates and no
 populated `gateway-auth.toml`; an isolated Python 3.13 environment imported the
-built 0.6.0 wheel successfully.
+built 0.6.1 wheel successfully. Offline deployment-check tests cover every
+stage code, safe `ConfigurationError` visibility, raw-exception redaction,
+stdout/stderr and exit status, unknown arguments, and the no-content-read
+authentication access check. The offline check now applies the same transport
+policy validation as executable startup.
 
 The isolated packed smoke command installed the built 0.5.1 wheel and its
 dependencies into an isolated environment, started the packaged stdio entry

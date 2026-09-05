@@ -2,7 +2,7 @@
 
 > **Status:** Deferred pre-0.6 deployment reference. The launcher and PSD1
 > profiles below target the archived 0.5.1 environment interface and do not
-> configure package 0.6.0. Use the source-checkout TOML Quick Start in the root
+> configure package 0.6.1. Use the source-checkout TOML Quick Start in the root
 > README until these service wrappers receive a reviewed TOML migration.
 
 This runbook deploys the Dispenser Conditioning MCP as an independently

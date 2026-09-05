@@ -54,6 +54,13 @@ uv run python -m dispenser_conditioning_mcp.deployment_check
 uv run dispenser-conditioning-mcp
 ```
 
+Offline validation failures use a stable stage code and a sanitized operator
+message on stderr, with exit status 2. They never print a traceback, settings
+value, endpoint, absolute path, token, or raw integration exception. Add
+`--diagnostic` only when the local operator needs the exception class; it does
+not reveal raw exception text. The stages are `CONFIG`, `TRANSPORT_POLICY`,
+`HICUBE_IMPORT`, `SIGLENT_IMPORT`, `AUTH_ACCESS`, and `SERVER_ASSEMBLY`.
+
 During first commissioning, call only `read_vacuum_pressure` and
 `read_dispenser_power_state`. See the
 [detailed Raspberry Pi research guide](deployment/raspberrypi/QUICK_COMMISSIONING.md)
@@ -236,7 +243,8 @@ operator-local config; see [the verification report](docs/verification-report.md
 
 ## Operator startup configuration
 
-Package 0.6.0 replaces the environment-variable operator interface with three
+Package 0.6.1 uses the environment-variable-free operator interface introduced
+in 0.6.0, comprising three
 strict, closed TOML documents. Missing files, missing required values,
 placeholders, unknown keys, wrong TOML types, and invalid ranges deny startup
 before any device connection. The six tools, their schemas, structured results,

@@ -1,5 +1,5 @@
-# Archived 0.5.1 environment-profile launcher. Package 0.6.0 uses fixed TOML
-# settings from its source checkout; do not use this launcher with 0.6.0.
+# Archived 0.5.1 environment-profile launcher. Package 0.6.1 uses fixed TOML
+# settings from its source checkout; do not use this launcher with 0.6.1.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]

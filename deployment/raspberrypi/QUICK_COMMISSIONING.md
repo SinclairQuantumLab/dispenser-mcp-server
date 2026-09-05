@@ -1,6 +1,6 @@
 # Raspberry Pi Research Quick Commissioning
 
-This is the current source-checkout path for package 0.6.0. It uses the same
+This is the current source-checkout path for package 0.6.1. It uses the same
 strict TOML settings as every supported development host. It is not the future
 hardened/offline systemd release bundle.
 
@@ -51,6 +51,13 @@ path from the checkout. Do not configure them as environment variables.
 uv run python -m dispenser_conditioning_mcp.deployment_check
 uv run dispenser-conditioning-mcp
 ```
+
+An offline-validation failure reports one safe stage code and sanitized message
+on stderr and exits with status 2. Use `--diagnostic` to append only the
+exception class; it never prints raw exception text, settings values, device
+addresses, local paths, authentication contents, or a traceback. Unknown CLI
+options are rejected. The offline check validates transport policy but never
+opens a network connection or constructs a device session.
 
 Stdio is the default. For first commissioning, discover the six tools and call
 only `read_vacuum_pressure` and `read_dispenser_power_state`. Confirm pressure

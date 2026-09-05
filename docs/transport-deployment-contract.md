@@ -1,7 +1,8 @@
 # Transport and Deployment Contract
 
-Package version 0.6.0 replaces environment-variable startup configuration with
-strict repository-local TOML documents. This does not change the six-tool
+Package version 0.6.1 retains the strict repository-local TOML documents
+introduced in 0.6.0 and adds stage-coded, sanitized offline startup diagnostics.
+This does not change the six-tool
 conditioning contract or the v0.4.3 power-safety semantics.
 
 ## Startup settings
