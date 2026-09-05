@@ -36,7 +36,9 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
             )
             assert response.status_code == 401
             assert access.token not in response.text
-        assert (await client.get("/dashboard")).status_code == 303
+        anonymous_page = await client.get("/dashboard")
+        assert anonymous_page.status_code == 303
+        assert access.token not in anonymous_page.text
         assert (await client.get("/dashboard/operator")).status_code == 403
         assert access.token not in (await client.get("/dashboard/login")).text
         assert (
@@ -57,6 +59,10 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
             "/session.js",
         ):
             assert (await client.get(path)).status_code == 200
+        authorized_page = await client.get("/dashboard")
+        assert access.token in authorized_page.text
+        assert "Dashboard access phrase" in authorized_page.text
+        assert authorized_page.headers["cache-control"] == "no-store"
         assert (await client.get("/dashboard/operator")).status_code == 403
         cookies = client.cookies
     restarted = Starlette(routes=dashboard_routes(tmp_path))
@@ -66,12 +72,17 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
         cookies=cookies,
     ) as client:
         assert (await client.get("/api/session")).status_code == 401
+        assert (await client.get("/dashboard")).status_code == 303
+        assert (
+            await client.post("/dashboard/login", data={"code": access.token})
+        ).status_code == 401
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 4321)),
         base_url="http://untrusted-host",
     ) as client:
         assert (await client.get("/api/session")).status_code == 200
         assert access.token in (await client.get("/dashboard/operator")).text
+        assert access.token in (await client.get("/dashboard")).text
 
 
 @pytest.mark.anyio

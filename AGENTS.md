@@ -161,8 +161,9 @@
   children of runs/. Never change the active recorder, start/stop acquisition,
   or expose arbitrary browser-selected paths. Saved-only preview has no live view.
 - Guard every dashboard page/data/asset route with the startup-scoped operator
-  access boundary. Leave /mcp independent. Show access phrases only on actual
-  socket-loopback operator pages and HTTP startup terminal, never MCP results,
+  access boundary. Leave /mcp independent. Show access phrases in the HTTP startup terminal, socket-loopback operator page,
+  and dashboard for loopback or already-authenticated remote viewers; never anonymous
+  remote/login pages, static assets, MCP results,
   records or URLs. Disable proxy_headers on owned HTTP entrypoints. This excludes
   uncredentialed remote tool-only agents, not same-host full-access agents or
   untrusted proxies whose connections appear local. Do not claim OS isolation.

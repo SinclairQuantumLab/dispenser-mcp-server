@@ -166,7 +166,10 @@ an associated observer file; this never changes MCP tool results or decision inp
 The phrase has two random words and two digits, changes each HTTP process, and
 is reusable during that process. Five incorrect logins block further login
 attempts for up to 60 seconds across the process; cookies remain separate random
-secrets. Remote dashboard visitors must enter the operator access phrase at
+secrets. The dashboard shows the current phrase near the top to loopback viewers and
+already-authenticated remote viewers, never anonymous visitors. It is valid until
+server restart and is not saved in records or static assets.
+Remote dashboard visitors must enter the operator access phrase at
 `/dashboard/login`. Each HTTP process generates a new code, shown only in its
 startup terminal and on the server-loopback `/dashboard/operator` page. Actual
 loopback connections can view directly. The code is reusable until restart, not a

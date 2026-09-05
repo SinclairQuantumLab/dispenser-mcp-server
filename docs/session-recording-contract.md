@@ -198,8 +198,11 @@ its protocol, public results, control checks and lack of MCP caller authenticati
 are unchanged. A dashboard login is not hardware-control authorization.
 
 Each HTTP app starts with a random in-memory access code and separate cookie secret.
-The code appears only in the startup operator terminal and at
-`/dashboard/operator` for an actual socket-loopback peer. Remote login exchanges
+The phrase appears in the startup operator terminal, at `/dashboard/operator`
+for an actual socket-loopback peer, and prominently on the dashboard for loopback
+or already-authenticated remote viewers. Anonymous remote/login pages never show
+it. Server-side rendering inserts it after access checks, with no-store caching;
+static assets, run records and browser storage do not contain it. Remote login exchanges
 the submitted code for an HttpOnly, SameSite=Strict session cookie. The code is
 reusable during that process, **not a single-redemption OTP**. Restart invalidates
 both old codes and cookies. There are no accounts, files, database or token query

@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import json
+from html import escape
 from pathlib import Path
 from typing import Any, cast
 
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from starlette.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from starlette.routing import BaseRoute, Route
 
 from dispenser_conditioning_mcp import run_directory
@@ -117,8 +124,11 @@ def dashboard_routes(
         return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
     async def page(request: Request) -> Response:
-        return FileResponse(
-            assets / "session.html", headers={"Cache-Control": "no-store"}
+        # The route guard runs before rendering; never expose this in static assets.
+        html = (assets / "session.html").read_text(encoding="utf-8")
+        return HTMLResponse(
+            html.replace("<!-- DASHBOARD_ACCESS_PHRASE -->", escape(access.token)),
+            headers={"Cache-Control": "no-store"},
         )
 
     async def script(request: Request) -> Response:
