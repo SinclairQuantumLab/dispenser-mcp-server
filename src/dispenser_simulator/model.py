@@ -391,7 +391,6 @@ class SimulatedDispenser:
             return
 
         trip = {
-            "schema_version": 2,
             "observed_at": self._timestamp(),
             "observed_native_ch1_current_a": measured,
             "reason": reason,

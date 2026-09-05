@@ -35,7 +35,6 @@ if (Test-Path -LiteralPath $statePath) {
 
 $record = [ordered]@{
     record_type = "initialized_state"
-    schema_version = 1
     initialized_at = [DateTimeOffset]::UtcNow.ToString("o")
 }
 $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(

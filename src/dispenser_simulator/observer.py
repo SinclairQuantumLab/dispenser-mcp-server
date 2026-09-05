@@ -23,7 +23,6 @@ class Observer:
         if self.path is None:
             return
         record = {
-            "schema_version": 1,
             "run_id": self.run_id,
             "sequence": self.sequence,
             "observer_error_count": self.error_count,

@@ -148,7 +148,7 @@ def test_windows_hil_initializer_is_atomic_and_has_no_reset_surface() -> None:
     assert "[System.IO.FileOptions]::WriteThrough" in initializer
     assert "$stream.Flush($true)" in initializer
     assert 'record_type = "initialized_state"' in initializer
-    assert "schema_version = 1" in initializer
+    assert "schema_version" not in initializer
     assert "Remove-Item" not in initializer
     assert "Delete(" not in initializer
     assert "Reset" not in initializer

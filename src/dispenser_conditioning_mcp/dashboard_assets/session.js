@@ -57,9 +57,9 @@ function selectEvent(id, jump = false) {
   readable.append(text("h3", shortId(id) + " · " + outcome(event) + " · " + toolLabel(event.payload?.tool)));
   const decision = event.kind === "decision" ? event : events.find(e => e.kind === "decision" && e.decision_id === event.decision_id);
   const ctx = decision?.payload?.action_context;
-  const chosenAction = ctx?.action ?? decision?.payload?.chosen_action;
-  const statedReason = ctx?.rationale_summary ?? decision?.payload?.rationale_summary;
-  const supportingIds = ctx?.observation_ids ?? decision?.payload?.basis_event_ids ?? [];
+  const chosenAction = ctx?.action;
+  const statedReason = ctx?.rationale_summary;
+  const supportingIds = ctx?.observation_ids ?? [];
   const args = event.payload?.arguments || {};
   if (chosenAction) readable.append(text("p", actor() + " chose: " + chosenAction));
   if (statedReason) readable.append(text("p", "Stated reason: " + statedReason));

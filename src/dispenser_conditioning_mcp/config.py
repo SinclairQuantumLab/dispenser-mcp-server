@@ -105,7 +105,6 @@ class McpStartupConfiguration:
         _closed_keys(
             document,
             {
-                "schema_version",
                 "backend",
                 "simulation",
                 "acceptance_context",
@@ -182,7 +181,7 @@ class HiCubeConfiguration:
         document = _read_toml(layout.hicube_settings_file, "HiCube settings")
         _closed_keys(
             document,
-            {"schema_version", "host", "port", "timeout_s"},
+            {"host", "port", "timeout_s"},
             "HiCube settings",
         )
         client_file = layout.hicube_client_file
@@ -245,7 +244,6 @@ class SiglentConfiguration:
         _closed_keys(
             document,
             {
-                "schema_version",
                 "identifier",
                 "timeout_s",
                 "minimum_command_interval_ms",

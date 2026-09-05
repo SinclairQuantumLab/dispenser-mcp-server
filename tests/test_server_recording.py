@@ -97,6 +97,10 @@ async def test_direct_client_records_context_calls_and_nonactuating_completion(
         json.loads(line)
         for line in (service.directory / "events.jsonl").read_text().splitlines()
     ]
+    assert all("schema_version" not in event for event in events)
+    assert "schema_version" not in json.loads(
+        (service.directory / "metadata.json").read_text()
+    )
     assert any(
         event["kind"] == "decision" and event["payload"].get("completion")
         for event in events

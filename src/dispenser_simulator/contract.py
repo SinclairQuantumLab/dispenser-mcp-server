@@ -225,41 +225,15 @@ def _power_output_schema() -> dict[str, Any]:
         "mutating_operation": {"type": "string", "minLength": 1},
     }
     common_trip_required = [
-        "schema_version",
         "observed_at",
         "observed_native_ch1_current_a",
         "reason",
         "mutating_operation",
     ]
-    legacy_trip_schema: dict[str, Any] = {
+    outside_band_trip_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             **common_trip_properties,
-            "schema_version": {"type": "integer", "const": 1},
-            "observed_native_ch1_current_a": {
-                "description": (
-                    "Signed finite nonzero JSON number; exact positive and "
-                    "negative zero are invalid."
-                ),
-                "anyOf": [
-                    {"type": "number", "exclusiveMaximum": 0},
-                    {"type": "number", "exclusiveMinimum": 0},
-                ],
-            },
-            "reason": {
-                "type": "string",
-                "const": "post_operation_nonzero_measured_native_current",
-            },
-        },
-        "required": common_trip_required,
-        "additionalProperties": False,
-        "title": "LegacyUnloadedHilInterlockTripV1",
-    }
-    v2_outside_band_trip_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            **common_trip_properties,
-            "schema_version": {"type": "integer", "const": 2},
             "observed_native_ch1_current_a": {
                 "description": (
                     "Signed finite JSON number whose absolute value is greater "
@@ -283,13 +257,12 @@ def _power_output_schema() -> dict[str, Any]:
         },
         "required": common_trip_required,
         "additionalProperties": False,
-        "title": "UnloadedHilInterlockOutsideSafeBandTripV2",
+        "title": "UnloadedHilInterlockOutsideSafeBandTrip",
     }
-    v2_unavailable_trip_schema: dict[str, Any] = {
+    unavailable_trip_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             **common_trip_properties,
-            "schema_version": {"type": "integer", "const": 2},
             "observed_native_ch1_current_a": {"type": "null"},
             "reason": {
                 "type": "string",
@@ -298,13 +271,12 @@ def _power_output_schema() -> dict[str, Any]:
         },
         "required": common_trip_required,
         "additionalProperties": False,
-        "title": "UnloadedHilInterlockUnavailableTripV2",
+        "title": "UnloadedHilInterlockUnavailableTrip",
     }
     trip_record_schema: dict[str, Any] = {
         "oneOf": [
-            legacy_trip_schema,
-            v2_outside_band_trip_schema,
-            v2_unavailable_trip_schema,
+            outside_band_trip_schema,
+            unavailable_trip_schema,
         ]
     }
     trip_schema: dict[str, Any] = {

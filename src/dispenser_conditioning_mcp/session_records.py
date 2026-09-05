@@ -320,7 +320,6 @@ class SessionRecorder:
         self.session_id = str(uuid4())
         self.observed_time_origin = observed_time_origin
         self.metadata = {
-            "schema_version": 1,
             "session_id": self.session_id,
             "created_at": utc_now(),
             "source": source,
@@ -348,7 +347,6 @@ class SessionRecorder:
         virtual_time_s: float | None = None,
     ) -> dict[str, Any]:
         event: dict[str, Any] = {
-            "schema_version": 1,
             "event_id": str(uuid4()),
             "session_id": self.session_id,
             "recorded_at": utc_now(),

@@ -45,7 +45,7 @@ cp settings/py-siglent-spd3000/gateway-settings.toml.template settings/py-siglen
 ```
 
 `settings/.gitignore` excludes actual `*.toml` recursively; templates stay tracked.
-Runtime paths are unchanged. MCP-owned settings no longer require `schema_version`; legacy keys are accepted and ignored (record/observer/HIL schemas are unchanged):
+Runtime paths are unchanged. MCP-owned settings use the current field set without `schema_version`; remove that obsolete key from local settings:
 
 ```text
 settings/mcp-settings.toml

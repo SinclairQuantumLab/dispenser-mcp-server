@@ -278,16 +278,8 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
     assert safe_band_schema["maximum"] == 0.001
     trip_schema = state_output_schema["$defs"]["UnloadedHilTripRecord"]
     assert trip_schema["anyOf"] == [
-        {"$ref": "#/$defs/LegacyUnloadedHilTripRecord"},
         {"$ref": "#/$defs/OutsideBandUnloadedHilTripRecord"},
         {"$ref": "#/$defs/UnavailableUnloadedHilTripRecord"},
-    ]
-    legacy_current_schema = state_output_schema["$defs"]["LegacyUnloadedHilTripRecord"][
-        "properties"
-    ]["observed_native_channel_current_a"]
-    assert legacy_current_schema["anyOf"] == [
-        {"exclusiveMaximum": 0.0, "type": "number"},
-        {"exclusiveMinimum": 0.0, "type": "number"},
     ]
     outside_current_schema = state_output_schema["$defs"][
         "OutsideBandUnloadedHilTripRecord"

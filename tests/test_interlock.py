@@ -20,7 +20,6 @@ def initialize_state(path: Path) -> None:
         json.dumps(
             {
                 "record_type": "initialized_state",
-                "schema_version": 1,
                 "initialized_at": STARTED_AT.isoformat(),
             }
         ),
@@ -33,9 +32,9 @@ def pending_guard_path(path: Path) -> Path:
 
 
 def trip_record() -> UnloadedHilTripRecord:
-    return UnloadedHilTripRecord.legacy(
+    return UnloadedHilTripRecord.outside_safe_band(
         observed_at=STARTED_AT,
-        observed_native_channel_current_a=0.001,
+        observed_native_channel_current_a=0.002,
         operation="enable_dispenser_output",
     )
 
@@ -468,8 +467,8 @@ def test_trip_publication_retires_guard_after_durable_latched_state(
     assert not pending_guard_path(path).exists()
 
 
-@pytest.mark.parametrize("current", [0.001, -0.001])
-def test_v041_schema_v1_trip_remains_latched_without_reinterpretation(
+@pytest.mark.parametrize("current", [0.002, -0.002])
+def test_current_trip_remains_latched_without_reinterpretation(
     tmp_path: Path,
     current: float,
 ) -> None:
@@ -477,10 +476,9 @@ def test_v041_schema_v1_trip_remains_latched_without_reinterpretation(
     path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
                 "observed_at": "2026-09-03T12:00:00Z",
                 "observed_native_channel_current_a": current,
-                "reason": "post_operation_nonzero_measured_native_current",
+                "reason": "post_operation_measured_native_current_outside_safe_band",
                 "operation": "enable_dispenser_output",
             }
         ),
@@ -490,7 +488,6 @@ def test_v041_schema_v1_trip_remains_latched_without_reinterpretation(
     record = FileUnloadedHilDurableStateProvider(path).read_trip()
 
     assert record is not None
-    assert record.schema_version == 1
     assert record.observed_native_channel_current_a == current
 
 
@@ -498,35 +495,30 @@ def test_v041_schema_v1_trip_remains_latched_without_reinterpretation(
     "payload",
     [
         {
-            "schema_version": 1,
             "observed_at": "2026-09-03T12:00:00Z",
             "observed_native_channel_current_a": 0.0,
-            "reason": "post_operation_nonzero_measured_native_current",
+            "reason": "post_operation_measured_native_current_outside_safe_band",
             "operation": "enable_dispenser_output",
         },
         {
-            "schema_version": 1,
             "observed_at": "2026-09-03T12:00:00Z",
             "observed_native_channel_current_a": float("nan"),
-            "reason": "post_operation_nonzero_measured_native_current",
+            "reason": "post_operation_measured_native_current_outside_safe_band",
             "operation": "enable_dispenser_output",
         },
         {
-            "schema_version": 1,
             "observed_at": "2026-09-03T12:00:00Z",
             "observed_native_channel_current_a": None,
-            "reason": "post_operation_nonzero_measured_native_current",
+            "reason": "post_operation_measured_native_current_outside_safe_band",
             "operation": "enable_dispenser_output",
         },
         {
-            "schema_version": 2,
             "observed_at": "2026-09-03T12:00:00Z",
             "observed_native_channel_current_a": 0.001,
             "reason": "post_operation_measured_native_current_outside_safe_band",
             "operation": "enable_dispenser_output",
         },
         {
-            "schema_version": 2,
             "observed_at": "2026-09-03T12:00:00Z",
             "observed_native_channel_current_a": 0.002,
             "reason": "post_operation_measured_native_current_unavailable",

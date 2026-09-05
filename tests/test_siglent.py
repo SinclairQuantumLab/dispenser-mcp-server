@@ -231,7 +231,6 @@ def unloaded_configuration(
             json.dumps(
                 {
                     "record_type": "initialized_state",
-                    "schema_version": 1,
                     "initialized_at": "2026-09-03T12:00:00+00:00",
                 }
             ),
@@ -572,7 +571,6 @@ def test_acceptance_context_rejects_other_confirmation_before_session(
             json.dumps(
                 {
                     "record_type": "initialized_state",
-                    "schema_version": 1,
                     "initialized_at": "2026-09-03T12:00:00+00:00",
                 }
             ),
@@ -890,7 +888,6 @@ def test_unloaded_hil_outside_band_current_trips_and_uses_safe_order(
     assert trip.observed_native_channel_current_a == measured_current_a
     assert trip.observed_at == datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
     assert trip.operation == "set_dispenser_current"
-    assert trip.schema_version == 2
     assert trip.reason == "post_operation_measured_native_current_outside_safe_band"
 
     first_measurement = device.events.index("read_measured_current")
@@ -989,7 +986,6 @@ def test_unavailable_measurement_on_write_free_replay_durably_fails_closed(
     trip = UnloadedHilTripRecord.model_validate_json(
         config.unloaded_hil_state_file.read_text(encoding="utf-8")
     )
-    assert trip.schema_version == 2
     assert trip.observed_native_channel_current_a is None
     assert trip.reason == "post_operation_measured_native_current_unavailable"
     first_measurement = device.events.index("read_measured_current")
@@ -1039,14 +1035,16 @@ def test_unloaded_hil_trip_persists_across_restart_and_denies_before_session(
     assert not any(event.startswith("set_") for event in restarted_device.events)
 
 
-def test_v041_trip_record_remains_latched_before_device_session(tmp_path: Path) -> None:
+def test_current_trip_record_remains_latched_before_device_session(
+    tmp_path: Path,
+) -> None:
     config = unloaded_configuration(tmp_path)
     trip_file = config.unloaded_hil_state_file
     assert trip_file is not None
     trip_file.write_text(
-        UnloadedHilTripRecord.legacy(
+        UnloadedHilTripRecord.outside_safe_band(
             observed_at=datetime(2026, 9, 3, 12, 0, tzinfo=UTC),
-            observed_native_channel_current_a=0.001,
+            observed_native_channel_current_a=0.002,
             operation="enable_dispenser_output",
         ).model_dump_json(),
         encoding="utf-8",
@@ -1078,7 +1076,6 @@ class FailingTripRecordStateProvider:
         assert self.pending is None
         self.pending = UnloadedHilPendingOperationRecord(
             record_type="pending_operation",
-            schema_version=1,
             operation_id=UUID(int=1),
             started_at=started_at,
             operation=operation,

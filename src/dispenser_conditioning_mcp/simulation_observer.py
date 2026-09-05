@@ -267,11 +267,6 @@ class SimulationObserverReader:
             raise ValueError("Expected observer object")
         row = cast(dict[str, Any], value)
         if (
-            type(row.get("schema_version")) is not int
-            or row["schema_version"] != 1
-        ):
-            raise ValueError("Expected observer schema_version 1")
-        if (
             row.get("simulated") is not True
             or row.get("model_revision") != "two_inventory_v1"
         ):

@@ -37,15 +37,6 @@ EnableConfirmation = Literal[
     "confirmed_parallel_ch1",
     "confirmed_no_dispenser_or_unapproved_load_connected",
 ]
-FiniteNegativeCurrent = Annotated[
-    float,
-    Field(strict=True, allow_inf_nan=False, lt=0.0),
-]
-FinitePositiveCurrent = Annotated[
-    float,
-    Field(strict=True, allow_inf_nan=False, gt=0.0),
-]
-SignedFiniteNonzeroCurrent = FiniteNegativeCurrent | FinitePositiveCurrent
 BelowUnloadedHilSafeBandCurrent = Annotated[
     float,
     Field(
@@ -183,30 +174,11 @@ class PowerSupplySessionFactory(Protocol):
         raise NotImplementedError
 
 
-class LegacyUnloadedHilTripRecord(BaseModel):
-    """Valid immutable trip record written by v0.4.1."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    schema_version: Literal[1]
-    observed_at: datetime = Field(description="UTC timestamp of trip detection.")
-    observed_native_channel_current_a: SignedFiniteNonzeroCurrent
-    reason: Literal["post_operation_nonzero_measured_native_current"]
-    operation: PowerMutationOperation
-
-    @model_validator(mode="after")
-    def require_nonzero_observation(self) -> Self:
-        if self.observed_native_channel_current_a == 0.0:
-            raise ValueError("legacy trip current must be signed finite nonzero")
-        return self
-
-
 class OutsideBandUnloadedHilTripRecord(BaseModel):
-    """Immutable v2 trip record for one signed outside-band measurement."""
+    """Immutable current-format trip record for one signed outside-band measurement."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[2]
     observed_at: datetime = Field(description="UTC timestamp of trip detection.")
     observed_native_channel_current_a: SignedOutsideUnloadedHilSafeBandCurrent
     reason: Literal["post_operation_measured_native_current_outside_safe_band"]
@@ -223,11 +195,10 @@ class OutsideBandUnloadedHilTripRecord(BaseModel):
 
 
 class UnavailableUnloadedHilTripRecord(BaseModel):
-    """Immutable v2 trip record for an unavailable measured-current query."""
+    """Immutable current-format trip record for an unavailable measured-current query."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[2]
     observed_at: datetime = Field(description="UTC timestamp of trip detection.")
     observed_native_channel_current_a: None
     reason: Literal["post_operation_measured_native_current_unavailable"]
@@ -235,9 +206,7 @@ class UnavailableUnloadedHilTripRecord(BaseModel):
 
 
 UnloadedHilTripPayload = (
-    LegacyUnloadedHilTripRecord
-    | OutsideBandUnloadedHilTripRecord
-    | UnavailableUnloadedHilTripRecord
+    OutsideBandUnloadedHilTripRecord | UnavailableUnloadedHilTripRecord
 )
 
 
@@ -245,24 +214,6 @@ class UnloadedHilTripRecord(RootModel[UnloadedHilTripPayload]):
     """Structurally strict union of every durable unloaded-HIL trip variant."""
 
     model_config = ConfigDict(frozen=True)
-
-    @classmethod
-    def legacy(
-        cls,
-        *,
-        observed_at: datetime,
-        observed_native_channel_current_a: float,
-        operation: PowerMutationOperation,
-    ) -> Self:
-        return cls(
-            root=LegacyUnloadedHilTripRecord(
-                schema_version=1,
-                observed_at=observed_at,
-                observed_native_channel_current_a=observed_native_channel_current_a,
-                reason="post_operation_nonzero_measured_native_current",
-                operation=operation,
-            )
-        )
 
     @classmethod
     def outside_safe_band(
@@ -274,7 +225,6 @@ class UnloadedHilTripRecord(RootModel[UnloadedHilTripPayload]):
     ) -> Self:
         return cls(
             root=OutsideBandUnloadedHilTripRecord(
-                schema_version=2,
                 observed_at=observed_at,
                 observed_native_channel_current_a=observed_native_channel_current_a,
                 reason="post_operation_measured_native_current_outside_safe_band",
@@ -291,17 +241,12 @@ class UnloadedHilTripRecord(RootModel[UnloadedHilTripPayload]):
     ) -> Self:
         return cls(
             root=UnavailableUnloadedHilTripRecord(
-                schema_version=2,
                 observed_at=observed_at,
                 observed_native_channel_current_a=None,
                 reason="post_operation_measured_native_current_unavailable",
                 operation=operation,
             )
         )
-
-    @property
-    def schema_version(self) -> Literal[1, 2]:
-        return self.root.schema_version
 
     @property
     def observed_at(self) -> datetime:
@@ -326,7 +271,6 @@ class UnloadedHilPendingOperationRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     record_type: Literal["pending_operation"]
-    schema_version: Literal[1]
     operation_id: UUID
     started_at: datetime = Field(description="UTC timestamp before device access.")
     operation: PowerMutationOperation

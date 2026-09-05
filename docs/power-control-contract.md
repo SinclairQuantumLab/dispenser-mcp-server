@@ -262,20 +262,12 @@ record after restart also reports `unavailable_fail_closed` with
 `failure_reason="unfinished_pending_operation"` and rejects mutation before a
 session opens.
 
-Trip records use schema version 2 for new v0.4.3 events. Numeric outside-band
-events use reason `post_operation_measured_native_current_outside_safe_band` and
-retain the signed native-channel observation. Read, unavailable, and non-finite
-events use reason `post_operation_measured_native_current_unavailable` with a
-null observation. Existing v0.4.1 schema-version-1 records retain reason
-`post_operation_nonzero_measured_native_current`; they are accepted only for
-compatibility and remain latched without reinterpretation or clearing.
-
-The public output schema is structurally strict rather than relying only on a
-runtime check: the legacy v1 variant requires schema 1, its legacy reason, and a
-finite signed nonzero number; the v2 outside-band variant requires schema 2, its
-outside-band reason, and a finite signed value below `-0.001 A` or above
-`+0.001 A`; the v2 unavailable variant requires schema 2, its unavailable reason,
-and JSON null. Invalid persisted combinations fail closed without normalization.
+Trip records use one current unversioned shape. Numeric outside-band records
+require reason `post_operation_measured_native_current_outside_safe_band` and a
+finite signed current below -0.001 A or above +0.001 A. Unavailable records require
+reason `post_operation_measured_native_current_unavailable` and a null current.
+Legacy nonzero-only records are not accepted. Invalid persisted combinations
+fail closed; no file is automatically migrated, cleared or reinitialized.
 
 The protected provider exposes read-state, begin-operation, complete-operation,
 and first-trip recording responsibilities; it has no reset, clear, delete, or

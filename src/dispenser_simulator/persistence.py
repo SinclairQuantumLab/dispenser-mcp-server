@@ -18,15 +18,12 @@ from typing import Any, Protocol
 
 from .metadata import UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
 
-_FILE_SCHEMA_VERSION = 2
-_READABLE_FILE_SCHEMA_VERSIONS = frozenset({1, 2})
 _MAX_FILE_BYTES = 65_536
 _REPLACE_RETRY_DELAYS_S = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32)
 _FAIL_CLOSED_REASONS = frozenset(
     {"persistence_unavailable", "unfinished_pending_operation"}
 )
 _TRIP_FIELDS = {
-    "schema_version",
     "observed_at",
     "observed_native_ch1_current_a",
     "reason",
@@ -66,9 +63,6 @@ def _is_finite_number(value: object) -> bool:
 def _require_trip_record(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != _TRIP_FIELDS:
         raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
-    schema_version = value["schema_version"]
-    if type(schema_version) is not int:
-        raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
     if not isinstance(value["observed_at"], str) or not value["observed_at"]:
         raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
     if (
@@ -79,22 +73,11 @@ def _require_trip_record(value: object) -> dict[str, Any]:
 
     observed = value["observed_native_ch1_current_a"]
     reason = value["reason"]
-    if schema_version == 1:
-        valid = (
-            reason == "post_operation_nonzero_measured_native_current"
-            and _is_finite_number(observed)
-            and observed != 0.0
-        )
-    elif schema_version == 2 and reason == (
-        "post_operation_measured_native_current_outside_safe_band"
-    ):
+    if reason == ("post_operation_measured_native_current_outside_safe_band"):
         valid = _is_finite_number(observed) and (
             abs(observed) > UNLOADED_HIL_SAFE_MEASURED_CURRENT_ABS_A
         )
-    elif (
-        schema_version == 2
-        and reason == "post_operation_measured_native_current_unavailable"
-    ):
+    elif reason == "post_operation_measured_native_current_unavailable":
         valid = observed is None
     else:
         valid = False
@@ -105,8 +88,6 @@ def _require_trip_record(value: object) -> dict[str, Any]:
 
 def _require_snapshot(
     value: object,
-    *,
-    file_schema_version: int = _FILE_SCHEMA_VERSION,
 ) -> UnloadedHilInterlockSnapshot:
     if not isinstance(value, dict) or set(value) != {
         "status",
@@ -124,13 +105,7 @@ def _require_snapshot(
     if status == "latched":
         trip = _require_trip_record(value["trip"])
         failure_reason = value["failure_reason"]
-        if file_schema_version == 1:
-            # Simulator 0.2.1 wrote the trip reason into failure_reason. Read
-            # that legacy file shape, but normalize it to the public v0.4.3
-            # invariant exposed by all current results and writes.
-            if failure_reason not in {None, trip["reason"]}:
-                raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
-        elif failure_reason is not None:
+        if failure_reason is not None:
             raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
         return UnloadedHilInterlockSnapshot(
             status="latched",
@@ -138,8 +113,6 @@ def _require_snapshot(
             failure_reason=None,
         )
     if status == "unavailable_fail_closed":
-        if file_schema_version < 2:
-            raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
         failure_reason = value["failure_reason"]
         if value["trip"] is not None or failure_reason not in _FAIL_CLOSED_REASONS:
             raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
@@ -221,7 +194,6 @@ class FileUnloadedHilInterlockStore:
             }
         )
         return {
-            "schema_version": _FILE_SCHEMA_VERSION,
             "binding_sha256": self._binding_sha256,
             "unloaded_hil_interlock": {
                 "status": checked.status,
@@ -266,16 +238,9 @@ class FileUnloadedHilInterlockStore:
                 "Unloaded-HIL interlock state is unavailable or invalid."
             ) from None
         if not isinstance(document, dict) or set(document) != {
-            "schema_version",
             "binding_sha256",
             "unloaded_hil_interlock",
         }:
-            raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
-        file_schema_version = document["schema_version"]
-        if (
-            type(file_schema_version) is not int
-            or file_schema_version not in _READABLE_FILE_SCHEMA_VERSIONS
-        ):
             raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
         binding = document["binding_sha256"]
         if not isinstance(binding, str) or not hmac.compare_digest(
@@ -284,7 +249,6 @@ class FileUnloadedHilInterlockStore:
             raise InterlockStateError("Unloaded-HIL interlock state is invalid.")
         return _require_snapshot(
             document["unloaded_hil_interlock"],
-            file_schema_version=file_schema_version,
         )
 
     def save(self, snapshot: UnloadedHilInterlockSnapshot) -> None:

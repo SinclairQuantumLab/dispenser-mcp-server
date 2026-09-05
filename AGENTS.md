@@ -190,3 +190,11 @@
   templates), never actual operator TOMLs. settings/.gitignore owns the recursive
   *.toml exclusion. Preserve local files when changing Git tracking; back up
   settings before pulling the one-time tracked-to-template migration.
+- Pilot session/event/observer records need no single-format schema_version tag.
+  Preserve structural/association checks. Use one current format across settings,
+  records and durable HIL state; do not add legacy dispatch or normalization.
+  Update code and development fixtures together. Never clear/reinitialize actual
+  operational latch, pending or guard files as part of a format edit.
+- Remote update workflow: modify locally, push, then root asks the operator to
+  pull and restart. Do not add compatibility layers for stale remote code or
+  administer the remote host as a substitute for the operator's deployment.

@@ -19,7 +19,6 @@ def session(tmp_path: Path, kind="simulated") -> Path:
 
 def row(sequence=0, run_id="run-a"):
     return {
-        "schema_version": 1,
         "simulated": True,
         "model_revision": "two_inventory_v1",
         "run_id": run_id,

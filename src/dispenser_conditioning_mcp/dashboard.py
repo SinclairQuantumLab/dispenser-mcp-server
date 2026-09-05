@@ -211,11 +211,8 @@ class SessionTail:
                     self.offset = stream.tell()
                     try:
                         event = json.loads(line)
-                        if (
-                            event["schema_version"] != 1
-                            or event["session_id"] != metadata["session_id"]
-                        ):
-                            raise ValueError("Wrong schema or session ID")
+                        if event["session_id"] != metadata["session_id"]:
+                            raise ValueError("Wrong session ID")
                         rows = projections(event)
                         json.dumps(event, allow_nan=False)
                         self.events.append(event)

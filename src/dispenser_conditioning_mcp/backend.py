@@ -32,7 +32,6 @@ def create_startup_server(
     if backend != "simulation":
         raise ConfigurationError("backend must be real or simulation")
     allowed = {
-        "schema_version",
         "backend",
         "allow_remote_access",
         "port",

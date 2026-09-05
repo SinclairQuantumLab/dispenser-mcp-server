@@ -57,7 +57,6 @@ def initialize(path: Path, service_user: str, confirmation: str) -> None:
 
     record = {
         "record_type": "initialized_state",
-        "schema_version": 1,
         "initialized_at": datetime.now(UTC).isoformat(),
     }
     encoded = json.dumps(record, indent=2, sort_keys=True).encode("utf-8") + b"\n"

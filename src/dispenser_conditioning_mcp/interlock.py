@@ -35,7 +35,6 @@ class _CompletedOperationRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     record_type: Literal["completed_operation"]
-    schema_version: Literal[1]
     operation_id: str
     started_at: datetime
     completed_at: datetime
@@ -48,7 +47,6 @@ class _InitializedStateRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     record_type: Literal["initialized_state"]
-    schema_version: Literal[1]
     initialized_at: datetime
 
 
@@ -107,7 +105,6 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
             )
         pending = UnloadedHilPendingOperationRecord(
             record_type="pending_operation",
-            schema_version=1,
             operation_id=uuid4(),
             started_at=started_at,
             operation=operation,
@@ -140,7 +137,6 @@ class FileUnloadedHilDurableStateProvider(UnloadedHilDurableStateProvider):
             )
         completed = _CompletedOperationRecord(
             record_type="completed_operation",
-            schema_version=1,
             operation_id=str(pending.operation_id),
             started_at=pending.started_at,
             completed_at=completed_at,

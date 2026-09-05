@@ -233,3 +233,10 @@ control_enabled (default true) and compliance_voltage_v (default1.0 V, synthetic
 test setting only). No hidden scenario/seed is returned by MCP. Real backend is the
 default and retains its required identity/configuration/credential behavior.
 The model's original dynamics/clock and standalone stdio defaults are unchanged.
+
+Pilot session metadata/events and simulator observer snapshots do not emit a
+schema_version tag. Readers keep content and session/run association checks.
+Development uses one coordinated current format, including durable HIL records;
+there is no legacy migration or normalization. Historical files stay untouched,
+but readability across development format changes is not promised. Actual HIL
+state is never cleared or reinitialized automatically.

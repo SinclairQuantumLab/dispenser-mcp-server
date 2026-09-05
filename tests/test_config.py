@@ -9,14 +9,15 @@ from dispenser_conditioning_mcp.config import (
 )
 
 
-def test_legacy_settings_version_is_inert(tmp_path: Path) -> None:
+def test_obsolete_settings_version_is_rejected(tmp_path: Path) -> None:
     layout = _write_layout(
         tmp_path,
         main_extra='schema_version = "legacy"\n',
         hicube_extra="schema_version = 999\n",
         gateway_extra="schema_version = false\n",
     )
-    assert OperatorConfiguration.from_toml(layout).startup.control_enabled is False
+    with pytest.raises(ConfigurationError, match="unknown setting"):
+        OperatorConfiguration.from_toml(layout)
 
 
 def _write_layout(
@@ -59,12 +60,7 @@ def _write_layout(
         encoding="utf-8",
     )
     layout.hicube_settings_file.write_text(
-        (
-            'host = "192.0.2.10"\n'
-            "port = 4841\n"
-            "timeout_s = 2.5\n"
-            f"{hicube_extra}"
-        ),
+        (f'host = "192.0.2.10"\nport = 4841\ntimeout_s = 2.5\n{hicube_extra}'),
         encoding="utf-8",
     )
     layout.siglent_gateway_settings_file.write_text(
