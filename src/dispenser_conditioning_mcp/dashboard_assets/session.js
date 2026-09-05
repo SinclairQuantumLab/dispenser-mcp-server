@@ -110,6 +110,8 @@ let chartReady = false, rendering = false, clockInitializedFor = null;
 const byId = new Map();
 const recordNumbers = new Map();
 let selectedId = null, truthRevision = null, truthRows = [];
+let truthCursor=0, truthGeneration=-1, truthMore=false, truthData=null;
+let pollRunning=false, pollTimer=null;
 const shortId = id => recordNumbers.has(id) ? "#" + String(recordNumbers.get(id)).padStart(3, "0") : "Unloaded record";
 const actor = () => ({agent:"Agent",scripted:"Script",human:"Human"})[metadata.source] || "Caller";
 const toolLabel = name => ({
@@ -122,10 +124,9 @@ record_conditioning_decision:"Record a judgment (no hardware action)"
 function outcome(event) {
   if (event.kind === "decision") return actor() + " decision";
   if (event.kind === "call_intent") return "Requested";
-  const result = event.payload?.result;
-  const execution = result?._meta?.dispenser_conditioning?.execution || event.payload?.execution;
+  const execution = event.execution;
   if (execution === "not_executed") return "Not executed";
-  if (event.kind === "call_error" || result?.isError || result?.is_error) return "Error / state uncertain";
+  if (event.kind === "call_error" || event.is_error) return "Error / state uncertain";
   return "Completed";
 }
 function highlightSelection() {
@@ -143,8 +144,7 @@ function virtualMinutes(row) {
   const result = resultsByCall.get(row.call_id || event.call_id);
   if (result && result !== event) {
     if (num(result.virtual_time_s) !== null && result.virtual_time_basis !== "agent_decision_time") return result.virtual_time_s / 60;
-    const timing = result.payload?.result?._meta?.simulation_timing;
-    if (num(timing?.virtual_time_s) !== null) return timing.virtual_time_s / 60;
+    if (num(result.result_virtual_time_s) !== null) return result.result_virtual_time_s / 60;
   }
   return null;
 }
@@ -164,19 +164,22 @@ function selectEvent(id, jump = false) {
   const linkedItem = [...document.querySelectorAll("[data-record]")].find(node => node.dataset.record === id);
   if (linkedItem) linkedItem.parentElement.scrollTop += linkedItem.getBoundingClientRect().top - linkedItem.parentElement.getBoundingClientRect().top - 12;
   const readable = el("readable"); readable.replaceChildren();
-  readable.append(text("h3", shortId(id) + " · " + outcome(event) + " · " + toolLabel(event.payload?.tool)));
+  readable.append(text("h3", shortId(id) + " · " + outcome(event) + " · " + toolLabel(event.tool)));
   const decision = event.kind === "decision" ? event : events.find(e => e.kind === "decision" && e.decision_id === event.decision_id);
-  const ctx = decision?.payload?.action_context;
-  const chosenAction = ctx?.action;
-  const statedReason = ctx?.rationale_summary;
-  const supportingIds = ctx?.observation_ids ?? [];
-  const args = event.payload?.arguments || {};
-  readable.append(text("p", usageText(ctx?.token_usage || event.payload?.arguments?.action_context?.token_usage), "muted"));
+  const chosenAction = decision?.chosen_action;
+  const statedReason = decision?.rationale_summary;
+  const supportingIds = decision?.basis_event_ids ?? [];
+  const args = event.requested_arguments || {};
+  readable.append(text("p", usageText(decision?.token_usage_id ? {usage_id:decision.token_usage_id,total_tokens:decision.total_tokens,input_tokens:decision.input_tokens,output_tokens:decision.output_tokens,cached_input_tokens:decision.cached_input_tokens,model:decision.token_model} : null), "muted"));
+  if(decision?.background) readable.append(text("p","Background: "+decision.background));
+  if(decision?.confidence_claim) readable.append(text("p","Caller confidence: "+decision.confidence_value+" in claim: "+decision.confidence_claim));
+  if(decision?.completion_outcome) readable.append(text("p",actor()+" assessment: "+decision.completion_outcome+" · Dispenser response: "+decision.dispenser_response+" (not proof of output OFF)."));
   if (chosenAction) readable.append(text("p", actor() + " chose: " + chosenAction));
   if (statedReason) readable.append(text("p", "Stated reason: " + statedReason));
+  if(event.error) readable.append(text("p","MCP error: "+event.error,"error"));
   if (num(args.target_current_a) !== null) readable.append(text("p", "Requested load-current target: " + fmt(args.target_current_a) + " A"));
   if (num(args.expected_current_a) !== null) readable.append(text("p", "Expected previous load-current setting: " + fmt(args.expected_current_a) + " A (must match before the change)."));
-  readable.append(text("p", "MCP receipt: " + (event.payload?.received_at || event.received_at || event.recorded_at) + " · Source observation: " + (observations.find(r => r.event_id === id)?.observed_at || event.observed_at || event.payload?.result?.structuredContent?.observed_at || "not available")));
+  readable.append(text("p", "MCP receipt: " + (event.received_at || event.recorded_at) + " · Source observation: " + (observations.find(r => r.event_id === id)?.observed_at || event.observed_at || "not available")));
   if (el("clock").value === "virtual") readable.append(text("p", virtualMinutes(event) === null ? "Virtual placement unavailable; real decision/receipt timestamps remain unchanged." : "Virtual placement: " + placementLabel(event), "muted"));
   const links = text("div", "", "links");
   for (const related of events.filter(e => (event.call_id && e.call_id === event.call_id) || (event.decision_id && e.decision_id === event.decision_id))) {
@@ -193,7 +196,7 @@ native_ch1_measured_voltage_v: "Measured CH1 voltage: " + value + " V",
 output_enabled: "Output: " + (value ? "ON" : "OFF")
 })[key]).join(" · ")));
   el("raw").textContent = JSON.stringify(event, null, 2);
-  el("selection-label").textContent = `${shortId(id)} · Recorded ${event.recorded_at} · Full ID in original JSON`;
+  el("selection-label").textContent = `${shortId(id)} · Recorded ${event.recorded_at} · Full ID in dashboard record fields`;
   if (jump && chartReady) {
     const at = xFor(event);
     if (at !== null) {
@@ -273,15 +276,15 @@ function updatePanels() {
     if (row.confidence_claim) card.append(text("p", `Self-reported confidence: ${row.confidence_value ?? "unknown"} · Claim: ${row.confidence_claim}`, "muted"));
     if (row.completion_outcome) card.append(text("p", `${actor()} assessment: ${row.completion_outcome} · Dispenser response: ${row.dispenser_response}. This assessment does not confirm output OFF or successful activation.`, "banner"));
     const links = text("div", "", "links"); links.append(eventButton(row.event_id, "Decision record"));
-    for (const id of JSON.parse(row.basis_event_ids_json || "[]")) links.append(eventButton(id, `Supporting observation ${shortId(id)} ↗`));
+    for (const id of (row.basis_event_ids || [])) links.append(eventButton(id, `Supporting observation ${shortId(id)} ↗`));
     card.append(links); el("decisions").append(card);
   }
   if (!decisions.length) el("decisions").append(text("div", "No decisions recorded. No rationale is inferred from calls.", "empty"));
   el("events").replaceChildren();
   for (const event of events.filter(e => e.kind !== "decision").reverse()) {
-    const failed = event.kind === "call_error" || event.payload.result?.isError === true || event.payload.result?.is_error === true;
+    const failed = event.kind === "call_error" || event.is_error === true;
     const line = text("div", "", "event"); line.dataset.record = event.event_id;
-    line.append(eventButton(event.event_id, `${shortId(event.event_id)} · ${event.kind === "call_intent" ? actor() + " → MCP" : "MCP → " + actor()} · ${toolLabel(event.payload.tool)} · ${outcome(event)} · ${event.recorded_at}`));
+    line.append(eventButton(event.event_id, `${shortId(event.event_id)} · ${event.kind === "call_intent" ? actor() + " → MCP" : "MCP → " + actor()} · ${toolLabel(event.tool)} · ${outcome(event)} · ${event.recorded_at}`));
     if (failed) line.classList.add("error");
     el("events").append(line);
   }
@@ -335,14 +338,23 @@ async function draw() {
   chartReady = true; rendering = false;
 }
 
+function readFailure(error) {
+  if (error.name==="TimeoutError" || error.name==="AbortError") return "Dashboard data timeout; retained data may be stale. Retrying (this does not indicate MCP or equipment stopped)";
+  if (error.message?.startsWith("HTTP 401") || error.message?.startsWith("HTTP 403")) return "Dashboard authorization required; reload and sign in. Retained data may be stale";
+  if (error instanceof TypeError) return "Dashboard network read failed; retained data may be stale. Retrying";
+  return "Dashboard read failed: "+String(error.message||error).replace(/[.]+$/,"")+". Retained data may be stale; retrying";
+}
 async function poll() {
+  if (pollRunning) return;
+  clearTimeout(pollTimer);pollRunning=true;
+  let catchUp=false;
   try {
     const response = await fetch(`/api/session?after=${cursor}&generation=${generation}&${runQuery}`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
-    if (!response.ok) { const problem = await response.json(); throw new Error(problem.error || `HTTP ${response.status}`); }
+    if (!response.ok) { const problem = await response.json(); throw new Error(`HTTP ${response.status}: ${problem.error || "Dashboard request failed"}`); }
     const data = await response.json();
     el("view-mode").textContent = data.recording_view === "saved_recording" ? "SAVED RUN" : "LIVE VIEW · current process";
     const changed = data.reset || (data.events?.length || 0) > 0;
-    if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); resultsByCall.clear(); recordNumbers.clear(); selectedId = null; }
+    if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); resultsByCall.clear(); recordNumbers.clear(); selectedId = null; resetTimeView("chart");resetTimeView("truth-chart");truthCursor=0;truthGeneration=-1;truthRows=[];truthData=null;truthMore=false;truthRevision=null; }
     metadata = data.metadata || metadata;
     if (metadata.session_id && clockInitializedFor !== metadata.session_id) {
       el("clock").value = metadata.session_kind === "simulated" && metadata.observed_time_origin ? "virtual" : "wall";
@@ -350,7 +362,8 @@ async function poll() {
       clockInitializedFor = metadata.session_id;
     }
     generation = data.generation ?? generation; cursor = data.cursor ?? cursor;
-    events.push(...(data.events || [])); observations.push(...(data.observations || [])); controls.push(...(data.controls || [])); decisions.push(...(data.decisions || []));
+    const pageRecords=data.events||[];
+    events.push(...pageRecords);observations.push(...pageRecords.filter(r=>r.observation_kind));controls.push(...pageRecords.filter(r=>r.phase));decisions.push(...pageRecords.filter(r=>r.kind==="decision"));
     for (const event of data.events || []) { byId.set(event.event_id, event); recordNumbers.set(event.event_id, recordNumbers.size + 1); if (event.kind === "call_intent") intentsByCall.set(event.call_id, event); if (event.kind === "call_result" || event.kind === "call_error") resultsByCall.set(event.call_id,event); }
     const simulated = metadata.session_kind === "simulated", live = metadata.session_kind === "live";
     el("mode").className = "mode-strip" + (live ? " live" : "");
@@ -365,24 +378,34 @@ async function poll() {
     const lastObservation = observations.at(-1);
     const observedAgo = lastObservation ? Math.max(0, (Date.now() - Date.parse(lastObservation.recorded_at)) / 1000) : null;
     el("observation-age").textContent = lastObservation ? `Last source observation: ${lastObservation.observed_at || "unavailable"} · Received/recorded ${Math.floor(observedAgo)} s ago. New observations appear only when a caller invokes a reading or action; this page does not measure.` : "No observation yet. This dashboard does not sample instruments.";
-    el("status").textContent = `${events.length} records · ${observations.length} readings · ${controls.filter(c => c.phase === "call_intent").length} power requests · ${decisions.length} decisions${data.message ? "\n" + data.message : ""}${data.errors ? `\n${data.errors} unreadable record(s): ${data.last_error}` : ""}`;
+    el("status").textContent = `${data.has_more ? "Loading history" : "Caught up · waiting for new records"} · ${events.length} records · ${observations.length} readings · ${controls.filter(c => c.phase === "call_intent").length} power requests · ${decisions.length} decisions${data.message ? "\n" + data.message : ""}${data.errors ? `\n${data.errors} unreadable record(s): ${data.last_error}` : ""}`;
     el("status").className = data.status === "error" || data.errors ? "error" : "";
     if (changed) { updatePanels(); await draw(); await drawTokens(); }
     await pollTruth();
-  } catch (error) { el("status").textContent = `Read/connection error: ${error.message}. Displayed data may be stale.`; el("status").className = "error"; }
-  setTimeout(poll, 1000);
+    catchUp=Boolean(data.has_more || truthMore);
+  } catch (error) { el("status").textContent = readFailure(error); el("status").className = "error"; }
+  finally {pollRunning=false;pollTimer=setTimeout(poll,catchUp ? 0 : 1000);}
 }
 async function pollTruth(force=false) {
-  const section = el("inside");
-  section.hidden = metadata.session_kind !== "simulated";
-  if (section.hidden) return;
+  const section=el("inside");section.hidden=metadata.session_kind!=="simulated";
+  if (section.hidden) {truthMore=false;return;}
+  if (force) {if(truthData) await drawTruth(truthData,true);return;}
   try {
-    const response = await fetch("/api/simulation-state?" + runQuery, {cache:"no-store", signal:AbortSignal.timeout(5000)});
-    if (!response.ok) throw new Error("HTTP " + response.status);
-    const data = await response.json();
-    el("truth-status").textContent = data.status + " · " + (data.message || "Model snapshots available") + (data.errors ? " · Invalid rows: " + data.errors : "");
-    const rows = data.rows || [];
-    truthRows = rows;
+    const response=await fetch(`/api/simulation-state?after=${truthCursor}&generation=${truthGeneration}&${runQuery}`,{cache:"no-store",signal:AbortSignal.timeout(5000)});
+    if(!response.ok) throw new Error("HTTP "+response.status);
+    const data=await response.json();
+    if(data.reset) {truthRows=[];truthRevision=null;resetTimeView("truth-chart");}
+    truthCursor=data.cursor??truthCursor;truthGeneration=data.generation??truthGeneration;
+    truthMore=Boolean(data.has_more);
+    if(data.status==="mismatch" || data.status==="unavailable" || data.status==="error") truthRows=[];
+    truthRows.push(...(data.rows||[]));
+    truthData={...data,rows:truthRows};
+    el("truth-status").textContent=(truthMore?"Loading model history":"Caught up")+ " · "+truthRows.length+" model snapshots · "+data.status+" · "+(data.message||"Model snapshots available")+(data.errors?" · Invalid rows: "+data.errors:"");
+    await drawTruth(truthData,false);
+  } catch(error) {truthMore=false;el("truth-status").textContent=readFailure(error);}
+}
+async function drawTruth(data,force=false) {
+    const rows=data.rows||[];
     const revision = JSON.stringify([data.status,data.generation,rows.length,rows.at(-1)?.sequence,data.run_id]);
     if (!force && revision === truthRevision) return;
     truthRevision = revision;
@@ -429,8 +452,9 @@ async function pollTruth(force=false) {
       el("truth-selected").classList.add("highlight");
       el("truth-selected").scrollIntoView({behavior:"smooth",block:"center"});
     });
-  } catch (error) { el("truth-status").textContent = "Model state unavailable: " + error.message; }
+
 }
+
 el("clock").addEventListener("change", ()=>{resetTimeView("chart");draw().catch(showViewError);});
 for(const id of ["chart","truth-chart"]) {
   const [selectId,,count]=viewIds(id), isMain=id==="chart";

@@ -19,8 +19,15 @@ from starlette.routing import BaseRoute, Route
 
 from dispenser_conditioning_mcp import run_directory
 from dispenser_conditioning_mcp.dashboard_access import DashboardAccess
-from dispenser_conditioning_mcp.session_records import projections
+from dispenser_conditioning_mcp.session_records import (
+    as_dict,
+    error_text,
+    projections,
+    result_failed,
+)
 from dispenser_conditioning_mcp.simulation_observer import SimulationObserverReader
+
+PAGE_SIZE = 200
 
 
 def dashboard_routes(
@@ -102,10 +109,14 @@ def dashboard_routes(
 
     async def simulation_state(request: Request) -> Response:
         try:
+            after = int(request.query_params.get("after", "0"))
+            generation = int(request.query_params.get("generation", "-1"))
             _, observer, _ = selected(request)
         except ValueError as error:
             return JSONResponse({"error": str(error)}, status_code=400)
-        return JSONResponse(observer.snapshot(), headers={"Cache-Control": "no-store"})
+        return JSONResponse(
+            observer.snapshot(after, generation), headers={"Cache-Control": "no-store"}
+        )
 
     assets = Path(__file__).with_name("dashboard_assets")
 
@@ -183,6 +194,38 @@ def unavailable_reason(directory: Path) -> str | None:
     return None
 
 
+def dashboard_record(event: dict[str, Any]) -> dict[str, Any]:
+    """One display record, not the raw MCP envelope or duplicated CSV tables."""
+    view = {key: value for key, value in event.items() if key != "payload"}
+    payload = as_dict(event.get("payload"))
+    result = as_dict(payload.get("result"))
+    for _, row in projections(event):
+        view.update(row)
+    view.pop("arguments_json", None)
+    basis = view.pop("basis_event_ids_json", None)
+    if basis is not None:
+        view["basis_event_ids"] = json.loads(basis)
+    view["tool"] = payload.get("tool")
+    view["execution"] = payload.get("execution") or as_dict(
+        as_dict(result.get("_meta")).get("dispenser_conditioning")
+    ).get("execution")
+    view["is_error"] = event["kind"] == "call_error" or result_failed(result)
+    view["error"] = payload.get("error_message") or (
+        error_text(result) if view["is_error"] else None
+    )
+    arguments = {
+        key: value
+        for key, value in as_dict(payload.get("arguments")).items()
+        if key not in {"action_context", "completion"}
+    }
+    if arguments:
+        view["requested_arguments"] = arguments
+    timing = as_dict(as_dict(result.get("_meta")).get("simulation_timing"))
+    if timing:
+        view["result_virtual_time_s"] = timing.get("virtual_time_s")
+    return {key: value for key, value in view.items() if value is not None}
+
+
 class SessionTail:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
@@ -190,13 +233,13 @@ class SessionTail:
         self.identity = None
         self.generation = 0
         self.events: list[dict[str, Any]] = []
-        self.projected: list[list[tuple[str, dict[str, Any]]]] = []
         self.errors = 0
         self.last_error = None
 
     def snapshot(self, after: int = 0, generation: int = -1) -> dict[str, Any]:
         metadata: dict[str, Any] = {}
         status, message = "ready", None
+        pending = False
         try:
             metadata = json.loads(
                 (self.directory / "metadata.json").read_text(encoding="utf-8")
@@ -205,17 +248,19 @@ class SessionTail:
             stat = path.stat()
             identity = (stat.st_dev, stat.st_ino)
             if identity != self.identity or stat.st_size < self.offset:
-                self.offset, self.events, self.projected = 0, [], []
+                self.offset, self.events = 0, []
                 self.errors, self.last_error = 0, None
                 self.generation += 1
                 self.identity = identity
             with path.open("rb") as stream:
                 stream.seek(self.offset)
-                for _ in range(5000):
+                partial = False
+                for _ in range(PAGE_SIZE):
                     line = stream.readline()
                     if not line:
                         break
                     if not line.endswith(b"\n"):
+                        partial = True
                         message = "Waiting for the current event line to finish"
                         break
                     self.offset = stream.tell()
@@ -223,35 +268,29 @@ class SessionTail:
                         event = json.loads(line)
                         if event["session_id"] != metadata["session_id"]:
                             raise ValueError("Wrong session ID")
-                        rows = projections(event)
                         json.dumps(event, allow_nan=False)
-                        self.events.append(event)
-                        self.projected.append(rows)
+                        self.events.append(dashboard_record(event))
                     except (ValueError, TypeError, KeyError, AttributeError) as error:
                         self.errors += 1
                         self.last_error = str(error)
+                pending = self.offset < stat.st_size and not partial
         except FileNotFoundError:
             status, message = "waiting", "Waiting for session metadata and events.jsonl"
         except (OSError, ValueError) as error:
             status, message = "error", str(error)
         reset = generation != self.generation or after > len(self.events)
         start = 0 if reset else max(0, after)
-        tables: dict[str, list[dict[str, Any]]] = {
-            name: [] for name in ("observations", "controls", "decisions")
-        }
-        for group in self.projected[start:]:
-            for name, row in group:
-                tables[name].append(row)
+        end = min(start + PAGE_SIZE, len(self.events))
         return {
             "metadata": metadata,
             "status": status,
             "message": message,
             "source": str(self.directory),
             "generation": self.generation,
-            "cursor": len(self.events),
+            "cursor": end,
+            "has_more": end < len(self.events) or pending,
             "reset": reset,
             "errors": self.errors,
             "last_error": self.last_error,
-            "events": self.events[start:],
-            **tables,
+            "events": self.events[start:end],
         }

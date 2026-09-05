@@ -268,3 +268,12 @@ repeated IDs; offline totals must deduplicate within each run. Dashboard totals
 use the first report for each ID and visibly flag conflicting later values,
 without changing execution. Plots use the first corresponding record number,
 not a fabricated model observation timestamp. Reported coverage is explicit.
+
+Dashboard API responses are read-only projections, not the canonical record.
+`/api/session?after=<cursor>&generation=<generation>` returns metadata and at most
+200 compact display records in `events`, with `cursor`, `generation`, `reset`,
+and `has_more`. There are no repeated raw MCP envelopes or separate duplicate
+projection arrays. Consume consecutive pages; reset replaces the browser cache.
+The observer API uses the same cursor fields and 200-row pages, sending fixed
+parameters once, with a bounded association scan before rows are exposed.
+Raw JSONL/CSV and model-facing MCP results are unchanged.

@@ -142,7 +142,7 @@ class SimulationObserverReader:
             else "operator_selected",
         )
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, after: int = 0, generation: int = -1) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "status": "waiting",
             "message": None,
@@ -166,6 +166,9 @@ class SimulationObserverReader:
             "rows": [],
             "runs": [],
             "dropped_rows": 0,
+            "cursor": max(0, after),
+            "reset": generation != self.generation,
+            "has_more": False,
         }
         try:
             metadata = _object_file(self.directory / "metadata.json")
@@ -228,21 +231,30 @@ class SimulationObserverReader:
                 pending = stream.tell() < stat.st_size and not partial
             payload.update(
                 generation=self.generation,
+                reset=generation != self.generation or after > len(self.rows),
                 errors=self.errors,
                 last_error=self.last_error,
                 run_id=self.run_id,
                 dropped_rows=max(0, self._total_rows - len(self.rows)),
             )
+            if payload["reset"]:
+                payload["cursor"] = 0
             if self._conflict:
                 return {**payload, "status": "mismatch", "message": self._conflict}
             if pending:
                 return {
                     **payload,
                     "message": "Scanning remaining rows before confirming a single run",
+                    "has_more": True,
                 }
             if not self.rows:
                 return {**payload, "message": "Waiting for a complete observer row"}
-            rows = list(self.rows)
+            start = 0 if payload["reset"] else max(0, after)
+            end = min(start + 200, len(self.rows))
+            rows = [
+                {key: value for key, value in row.items() if key != "parameters"}
+                for row in self.rows[start:end]
+            ]
             message = "Waiting for a complete final row" if partial else None
             return {
                 **payload,
@@ -250,7 +262,9 @@ class SimulationObserverReader:
                 "message": message,
                 "parameters": self.parameters,
                 "rows": rows,
-                "runs": [{"run_id": self.run_id, "rows": rows}],
+                "runs": [{"run_id": self.run_id, "row_count": len(self.rows)}],
+                "cursor": end,
+                "has_more": end < len(self.rows),
             }
         except FileNotFoundError:
             return {

@@ -200,5 +200,5 @@ async def test_shared_http_app_serves_browser_routes_and_records_without_wrapper
         assert response.status_code == 200, response.text
         assert "dispenser_conditioning" in response.text
         data = (await http.get("/api/session")).json()
-        assert len(data["observations"]) == 1
+        assert len([row for row in data["events"] if row.get("observation_kind")]) == 1
         assert data["metadata"]["session_id"] == service.session_id
