@@ -16,8 +16,12 @@ See the exact [pressure contract](docs/pressure-observation-contract.md),
 
 ## Quick start
 
+One HTTP process serves either real instruments or an internal Python simulator.
+The operator selects `backend = "real"` (default) or `"simulation"` in the main
+TOML. There is no fallback between them and no model-facing backend switch.
+
 This Python repository runs on any supported host with Git, `uv`, and Python
-3.13. First commissioning is read-only. Keep `control_enabled = false`, and
+3.13. Real-hardware first commissioning is read-only. Keep its `control_enabled = false`, and
 never commit the populated gateway-authentication file.
 
 ```sh
@@ -31,7 +35,7 @@ The recursive clone checks out the pinned `py-siglent-spd3000` source, and
 declared in `pyproject.toml`. If `uv` is missing, follow its
 [official installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
 
-Edit the two nonsecret instrument settings files and the main safety/transport
+For the real backend, edit the two nonsecret instrument settings files and the main safety/transport
 settings file:
 
 ```text
@@ -39,6 +43,10 @@ settings/mcp-settings.toml
 settings/hicube-neo-client-settings.toml
 settings/py-siglent-spd3000/gateway-settings.toml
 ```
+
+The following configuration and deployment check are for **backend = "real"**.
+For a hardware-free host, use the simulation instructions below instead; no live
+settings or populated gateway-auth file is needed.
 
 Copy `settings/py-siglent-spd3000/gateway-auth.toml.template` to
 `settings/py-siglent-spd3000/gateway-auth.toml`, restrict it to the operator or
@@ -65,12 +73,43 @@ Streamable HTTP always listens at `/mcp`. The default
 from another computer, set `allow_remote_access = true` and connect to
 `http://<Pi-IP>:8000/mcp` (or its resolvable hostname). `port` is a top-level
 integer setting. SSH forwarding is optional. This supervised native-client pilot
-rejects browser Origin headers and has no built-in client authentication.
+rejects browser Origin headers on `/mcp` and has no built-in client authentication.
+The same process serves the read-only dashboard at `/dashboard`.
 
 During first commissioning, call only `read_vacuum_pressure` and
 `read_dispenser_power_state`. See the
 [detailed Raspberry Pi research guide](deployment/raspberrypi/QUICK_COMMISSIONING.md)
 for the supervised commissioning sequence.
+
+## Independent simulation host
+
+After the same recursive clone and ordinary `uv sync`, replace only
+`settings/mcp-settings.toml` with `settings/simulation-example.toml` (preserve any
+existing operator profile first). Set `allow_remote_access = true` if the decision
+agent is on another machine, then run the same command:
+
+```sh
+uv run dispenser-conditioning-mcp
+```
+
+The simulator runs **inside** this process, not at another externally exposed port.
+The clone contains its canonical runtime at `src/dispenser_simulator/`; the parent
+project is not needed. One RecordingAdapter creates one run under `runs/`, with
+the same seven public tools, session IDs, records, protected human dashboard and
+internal observer file. Seed/scenario stay operator-only and out of MCP results.
+The example is a disclosed connectivity fixture, not a hidden scientific test.
+Before a blind run, choose private operator configuration and keep source/files,
+loopback, authenticated dashboard and terminal inaccessible to the remote agent.
+
+New HTTP simulation defaults are synthetic `production_dispenser`,
+`control_enabled = true`, `compliance_voltage_v = 1.0` V. The voltage is a
+simulation-only test value, **not approved for live equipment**. Existing model
+limits/timing remain 4.8 A load ceiling, 0.2 A upward steps, 15 s read and 1 s action
+virtual increments; requests alone advance model time. No physics is changed.
+The old developer stdio command retains its original 10.0 V default and explicit
+environment overrides. HTTP simulation does not import hardware adapters or read
+their settings/authentication. Installed dependency code is not device access.
+The legacy deployment-check command is for the real backend, not required here.
 
 ## Tool surface
 
@@ -78,10 +117,43 @@ for the supervised commissioning sequence.
 | --- | --- | --- |
 | `read_vacuum_pressure` | none | Read one total-pressure snapshot |
 | `read_dispenser_power_state` | none | Read identity, topology, native setpoints/readbacks, output state, and fixed safety limits |
-| `prepare_dispenser_power` | none | Destructively overwrite the bound state: output off, zero current, then fixed compliance voltage |
-| `enable_dispenser_output` | one startup-context-specific confirmation | Enable only from the verified prepared zero-current state after the required fresh human physical confirmation |
-| `set_dispenser_current` | `target_current_a`, `expected_current_a` | Compare-and-set an absolute commanded load-current limit while output is on |
+| `prepare_dispenser_power` | `action_context` | Destructively overwrite the bound state: output off, zero current, then fixed compliance voltage |
+| `enable_dispenser_output` | `action_context` + one startup-context-specific confirmation | Enable only from the verified prepared zero-current state after the required fresh human physical confirmation |
+| `set_dispenser_current` | `action_context`, `target_current_a`, `expected_current_a` | Compare-and-set an absolute commanded load-current limit while output is on |
 | `shutdown_dispenser_power` | none | Perform an energy-reducing destructive overwrite: required outputs off first, then currents zero |
+
+The **unreleased session-recording interface extension** adds a seventh tool,
+`record_conditioning_decision(action_context, completion?)`, for a declared hold
+or finish without changing power. Normal prepare/enable/set actions require
+brief agent context; shutdown still accepts `{}` and executes before ordinary
+logging. Read results provide the session and observation IDs to reference.
+See [the exact context/recording contract](docs/session-recording-contract.md).
+
+Both entrypoints share the MCP checkout’s [run directory](runs/README.md);
+simulator defaults use the `_simulation_` label. One process creates one run.
+The server records raw JSONL and CSVs under `runs/<UTC-date-time>_live_<8hex>/`. Open
+`http://<server-IP>:8000/dashboard` for observations, control attempts/results,
+and declared rationale. A prominent source-mode strip distinguishes simulation,
+live-hardware records, and unknown/fixture data. Short record numbers link chart
+points to readable requests, results, decisions and supporting observations.
+Simulated sessions may additionally show a human-only internal-state panel from
+an associated observer file; this never changes MCP tool results or decision inputs.
+Remote dashboard visitors must enter the operator access code at
+`/dashboard/login`. Each HTTP process generates a new code, shown only in its
+startup terminal and on the server-loopback `/dashboard/operator` page. Actual
+loopback connections can view directly. The code is reusable until restart, not a
+single-use OTP; it is never an MCP argument or result. Keep it and the resulting
+browser cookie out of the remote decision agent’s context. This does not isolate
+same-host agents with local file, loopback, or terminal access. See the
+[dashboard access boundary](docs/session-recording-contract.md#operator-dashboard-access).
+
+Use **View run** to switch between the current process and saved runs in `runs/`.
+Selection changes only your browser; acquisition and recording continue unchanged.
+**Refresh run list** discovers newly saved folders. Legacy folders without the
+supported metadata/events files are listed as unavailable, without conversion.
+The dashboard samples no devices; it shows observation
+age. Completion/normal-response declarations are judgments, distinct from actual
+returned output-OFF status. No caller-side recording wrapper is required.
 
 All schemas are closed with `additionalProperties: false`. No tool accepts a
 host, port, path, resource, transport, channel, topology, identity, compliance
@@ -246,8 +318,10 @@ Package 0.6.1 uses the environment-variable-free operator interface introduced
 in 0.6.0, comprising three
 strict, closed TOML documents. Missing files, missing required values,
 placeholders, unknown keys, wrong TOML types, and invalid ranges deny startup
-before any device connection. The six tools, their schemas, structured results,
-literals, and safety semantics remain public tool contract v0.4.3.
+before any device connection. The six hardware tools retain their structured observation/action results and
+hardware safety semantics. The unreleased session-recording extension changes
+normal control inputs and adds one declaration tool; it is not identical to the
+older v0.4.3 input schema.
 
 | File | Operator settings |
 | --- | --- |
@@ -318,7 +392,7 @@ the reviewed first exact 0.2 A load-current step in this acceptance sequence.
    `prepare_dispenser_power`, then re-read state.
 4. Ask the human immediately before enable to verify that no dispenser or
    unapproved load is connected and that any present metrology wiring is
-   operator-approved. Call `enable_dispenser_output` with only
+   operator-approved. Call `enable_dispenser_output` with a fresh `action_context` and
    `unloaded_hil_connection_confirmation="confirmed_no_dispenser_or_unapproved_load_connected"`.
 5. Re-read state, set commanded load current from 0.0 A to 0.2 A with
    compare-and-set, and re-read state. Every completed mutation must produce a
@@ -334,7 +408,7 @@ conditioning or activation evidence.
 ## Integration and later safety layers
 
 Register `http://<server-IP>:8000/mcp` as a Streamable HTTP endpoint in the MCP
-host. Keep the process running and inspect the six-tool catalog before live reads.
+host. Keep the process running and inspect the seven-tool catalog before live reads.
 Use `control_enabled = false` during first catalog/read-only integration.
 
 Before unattended autonomous conditioning, separate higher-level work must add

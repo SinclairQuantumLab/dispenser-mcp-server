@@ -26,7 +26,7 @@ def test_startup_uses_http_and_requested_ipv4_listener(remote: bool, host: str) 
     configuration = McpTransportConfiguration.from_settings(settings)
     with patch("dispenser_conditioning_mcp.transport.uvicorn.run") as run:
         run_configured_transport(MCPServer("offline-test"), configuration)
-    assert run.call_args.kwargs == {"host": host, "port": 8123}
+    assert run.call_args.kwargs == {"host": host, "port": 8123, "proxy_headers": False}
 
 
 @pytest.mark.anyio

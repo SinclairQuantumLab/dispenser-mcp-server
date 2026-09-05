@@ -107,6 +107,8 @@ class McpStartupConfiguration:
             document,
             {
                 "schema_version",
+                "backend",
+                "simulation",
                 "acceptance_context",
                 "expected_serial_number",
                 "compliance_voltage_v",
@@ -118,6 +120,8 @@ class McpStartupConfiguration:
             "MCP settings",
         )
         _schema_version(document, "MCP settings")
+        if document.get("backend", "real") != "real":
+            raise ConfigurationError("Hardware configuration requires backend = real")
         acceptance_context = cast(
             PowerAcceptanceContext,
             _choice(

@@ -109,7 +109,7 @@
   False binds 127.0.0.1; true binds 0.0.0.0. Direct IP and hostname clients work
   without a mandatory SSH tunnel or manual Host/Origin lists. Do not detect LAN
   versus Internet or discover interfaces.
-- Reject browser Origin headers for the native-client pilot; retain local Host
+- Reject browser Origin headers only on /mcp for the native-client pilot; retain local Host
   checks and bounded request bodies. Remote exposure is the operator's choice.
 - During a live run, the execution agent uses MCP tools. The operator owns
   process administration, credentials, and interlock initialization/reset.
@@ -127,7 +127,7 @@
   Do not add reviewers or subagents unless the user explicitly requests them.
 - Use Python 3.13 and `uv`.
 - Keep device integration, domain normalization, MCP registration, and startup
-  HTTP startup separate and independently testable.
+  HTTP transport separate and independently testable.
 - Tests must use fakes and may not contact hardware, scan a network, or read
   credentials.
 - Use focused tests for affected configuration, transport, startup, protocol, and
@@ -141,3 +141,48 @@
   operator logs. Credentials and tokens must never appear in either.
 - Preserve labeled historical records; do not present old verification campaigns
   as gates or as evidence for new changes.
+
+## MCP-owned session records
+
+- Default hardware and simulator MCP records to this checkout’s `runs/` through
+  the shared run-directory helper: UTC timestamp, live/simulation label, unique
+  suffix. Keep each run flat and preserve explicit simulator path overrides.
+  One process remains one run; do not add a lifecycle orchestrator or move
+  historical records automatically. Track only the central runs/README.md.
+
+- Keep all runtime recorder, context and dashboard code/assets inside this
+  independently cloneable repository. Do not import parent-project modules.
+- The MCP records direct calls and brief agent-supplied action context. It does
+  not choose actions, sample in the background, assess narrative quality, or
+  apply confidence thresholds as an actuation-approval algorithm.
+- Normal prepare/enable/set require action_context; keep shutdown callable with
+  no context. Attempt shutdown before ordinary recording. Preserve the existing
+  controller identity/control-enable/HIL restrictions; do not conflate the
+  ordinary session logger with the durable HIL safety state provider.
+- Retain semantic structured results. Put record identifiers/status in MCP
+  metadata and an agent-visible text block. Post-call logging failure must
+  preserve the hardware result and must not suggest repeating a control action.
+- Record agent decision time, server receipt time, write time, and source
+  observation time distinctly. Completion and normal/abnormal response are
+  agent declarations, never substitutes for instrument-confirmed output state.
+- Dashboard routes are read-only and show observation age. Never expose
+  simulator internal truth through MCP tools/results or decision inputs. A separate
+  read-only human dashboard endpoint may show explicitly associated simulator
+  observer files only for simulated sessions; live and unknown sessions get no
+  internal-state data. Keep source mode and synthetic units conspicuous.
+- Keep dashboard run selection per browser/request. The empty selection always
+  refers to the configured current directory; saved selections are immediate
+  children of runs/. Never change the active recorder, start/stop acquisition,
+  or expose arbitrary browser-selected paths. Saved-only preview has no live view.
+- Guard every dashboard page/data/asset route with the startup-scoped operator
+  access boundary. Leave /mcp independent. Show access codes only on actual
+  socket-loopback operator pages and HTTP startup terminal, never MCP results,
+  records or URLs. Disable proxy_headers on owned HTTP entrypoints. This excludes
+  uncredentialed remote tool-only agents, not same-host full-access agents or
+  untrusted proxies whose connections appear local. Do not claim OS isolation.
+- Operator TOML selects real (default) or simulation backend before hardware
+  assembly. Never fall back between them or expose backend/seed/scenario in tools.
+  Simulation runs directly in-process with one existing RecordingAdapter and one
+  recorder; do not wrap it in the hardware recording server. Canonical simulator
+  source lives in src/dispenser_simulator under its specialist's ownership. Keep
+  model/clock behavior unchanged and sibling developer package a bootstrap only.

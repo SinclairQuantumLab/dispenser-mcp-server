@@ -1,5 +1,6 @@
 # MCP process and deployment-specific safety settings.
 schema_version = 1
+backend = "real"
 acceptance_context = "replace-with-production_dispenser-or-unloaded_hil"
 expected_serial_number = "replace-with-verified-serial"
 compliance_voltage_v = "replace-with-approved-voltage"

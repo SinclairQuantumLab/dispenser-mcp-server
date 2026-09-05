@@ -13,6 +13,9 @@ from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dispenser_conditioning_mcp.config import McpStartupConfiguration
+from dispenser_conditioning_mcp.dashboard import dashboard_routes
+from dispenser_conditioning_mcp.dashboard_access import DashboardAccess
+from dispenser_conditioning_mcp.recording_service import RecordingService
 
 DEFAULT_HTTP_PATH = "/mcp"
 MAX_HTTP_REQUEST_BODY_BYTES = 256 * 1024
@@ -54,7 +57,11 @@ class NativeClientOnlyMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and "origin" in Headers(scope=scope):
+        if (
+            scope["type"] == "http"
+            and scope["path"].rstrip("/") == DEFAULT_HTTP_PATH
+            and "origin" in Headers(scope=scope)
+        ):
             await Response("Browser origins are not supported", status_code=403)(
                 scope, receive, send
             )
@@ -74,6 +81,11 @@ def create_http_app(
         transport_security=configuration.transport_security(),
     )
     app.add_middleware(NativeClientOnlyMiddleware)
+    recording = getattr(server, "recording", None)
+    if isinstance(recording, RecordingService):
+        access = DashboardAccess()
+        app.state.dashboard_access = access
+        app.router.routes.extend(dashboard_routes(recording.directory, access=access))
     return app
 
 
@@ -81,8 +93,13 @@ def run_configured_transport(
     server: MCPServer[None], configuration: McpTransportConfiguration
 ) -> None:
     """Start the HTTP listener; this does not connect to an instrument."""
+    app = create_http_app(server, configuration)
+    access = getattr(app.state, "dashboard_access", None)
+    if isinstance(access, DashboardAccess):
+        access.announce()
     uvicorn.run(
-        create_http_app(server, configuration),
+        app,
         host=configuration.bind_host,
         port=configuration.port,
+        proxy_headers=False,
     )

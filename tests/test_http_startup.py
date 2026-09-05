@@ -195,7 +195,7 @@ run_configured_transport(server, transport)
         process.terminate()
         process.wait(timeout=5)
 
-    assert len(tools) == 6
+    assert len(tools) == 7
     assert pressure_result.is_error is False
     assert pressure_result.structured_content is not None
     assert pressure_result.structured_content["pressure_mbar"] == 4.0e-7

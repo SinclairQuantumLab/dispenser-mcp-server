@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import pytest
 from mcp import Client
@@ -19,7 +21,36 @@ from dispenser_conditioning_mcp.power_domain import (
     PowerSafetyLimits,
     UnloadedHilInterlockState,
 )
+from dispenser_conditioning_mcp.recording_service import RecordingService
 from dispenser_conditioning_mcp.server import create_server
+from dispenser_conditioning_mcp.session_records import SessionRecorder
+
+
+@pytest.fixture(autouse=True)
+def recording_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    recording = RecordingService(
+        SessionRecorder(
+            tmp_path / "session",
+            source="scripted",
+            session_kind="format_fixture",
+            label="Protocol fake fixture",
+        )
+    )
+    monkeypatch.setattr(
+        "dispenser_conditioning_mcp.server.RecordingService", lambda: recording
+    )
+
+
+def action_context(server: Any) -> dict[str, Any]:
+    return {
+        "session_id": server.recording.session_id,
+        "decision_at": "2026-09-05T12:00:00Z",
+        "action": "Explicit protocol test",
+        "background": "Fake controller only",
+        "rationale_summary": "Verify the selected call contract",
+        "observation_ids": [],
+        "confidence": {"claim": "This is a format fixture", "value": 1.0},
+    }
 
 
 class FakePressureSource:
@@ -187,6 +218,7 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
         "enable_dispenser_output",
         "set_dispenser_current",
         "shutdown_dispenser_power",
+        "record_conditioning_decision",
     ]
     for tool in tools:
         assert tool.input_schema["additionalProperties"] is False
@@ -220,14 +252,19 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
     assert set(set_schema["properties"]) == {
         "target_current_a",
         "expected_current_a",
+        "action_context",
     }
     assert set(set_schema["required"]) == {
         "target_current_a",
         "expected_current_a",
+        "action_context",
     }
     assert set_schema["properties"]["target_current_a"]["maximum"] == 4.8
     enable_schema = by_name["enable_dispenser_output"].input_schema
-    assert enable_schema["required"] == ["parallel_connection_confirmation"]
+    assert set(enable_schema["required"]) == {
+        "parallel_connection_confirmation",
+        "action_context",
+    }
     assert enable_schema["properties"]["parallel_connection_confirmation"]["const"] == (
         "confirmed_parallel_ch1"
     )
@@ -313,7 +350,11 @@ async def test_set_current_forwards_compare_and_set_values() -> None:
     async with Client(server) as client:
         result = await client.call_tool(
             "set_dispenser_current",
-            {"target_current_a": 0.2, "expected_current_a": 0.1},
+            {
+                "target_current_a": 0.2,
+                "expected_current_a": 0.1,
+                "action_context": action_context(server),
+            },
         )
 
     assert result.is_error is False
@@ -350,6 +391,7 @@ async def test_set_current_rejects_non_json_numbers_before_controller(
     server = create_server(FakePressureSource(), controller)
 
     async with Client(server) as client:
+        arguments["action_context"] = action_context(server)
         result = await client.call_tool("set_dispenser_current", arguments)
 
     assert result.is_error is True
@@ -364,7 +406,11 @@ async def test_set_current_accepts_json_integer_and_float_numbers() -> None:
     async with Client(server) as client:
         result = await client.call_tool(
             "set_dispenser_current",
-            {"target_current_a": 0, "expected_current_a": 0.0},
+            {
+                "target_current_a": 0,
+                "expected_current_a": 0.0,
+                "action_context": action_context(server),
+            },
         )
 
     assert result.is_error is False
@@ -381,22 +427,27 @@ async def test_enable_requires_fresh_parallel_confirmation() -> None:
         wrong_context = await client.call_tool(
             "enable_dispenser_output",
             {
+                "action_context": action_context(server),
                 "unloaded_hil_connection_confirmation": (
                     "confirmed_no_dispenser_or_unapproved_load_connected"
-                )
+                ),
             },
         )
         wrong_literal = await client.call_tool(
             "enable_dispenser_output",
             {
+                "action_context": action_context(server),
                 "parallel_connection_confirmation": (
                     "confirmed_no_dispenser_or_unapproved_load_connected"
-                )
+                ),
             },
         )
         confirmed = await client.call_tool(
             "enable_dispenser_output",
-            {"parallel_connection_confirmation": "confirmed_parallel_ch1"},
+            {
+                "parallel_connection_confirmation": "confirmed_parallel_ch1",
+                "action_context": action_context(server),
+            },
         )
 
     assert missing.is_error is True
@@ -421,19 +472,26 @@ async def test_unloaded_hil_enable_schema_cannot_reuse_production_confirmation()
         )
         production_literal = await client.call_tool(
             "enable_dispenser_output",
-            {"unloaded_hil_connection_confirmation": "confirmed_parallel_ch1"},
+            {
+                "unloaded_hil_connection_confirmation": "confirmed_parallel_ch1",
+                "action_context": action_context(server),
+            },
         )
         unloaded_confirmation = await client.call_tool(
             "enable_dispenser_output",
             {
+                "action_context": action_context(server),
                 "unloaded_hil_connection_confirmation": (
                     "confirmed_no_dispenser_or_unapproved_load_connected"
-                )
+                ),
             },
         )
 
     enable_schema = tools["enable_dispenser_output"].input_schema
-    assert enable_schema["required"] == ["unloaded_hil_connection_confirmation"]
+    assert set(enable_schema["required"]) == {
+        "unloaded_hil_connection_confirmation",
+        "action_context",
+    }
     assert enable_schema["properties"]["unloaded_hil_connection_confirmation"][
         "const"
     ] == ("confirmed_no_dispenser_or_unapproved_load_connected")

@@ -1,0 +1,12 @@
+# Copy to mcp-settings.toml on the simulator host; operator-only configuration.
+# Disclosed connectivity example, not a hidden scientific evaluation scenario.
+schema_version = 1
+backend = "simulation"
+allow_remote_access = false
+port = 8000
+
+[simulation]
+seed = "operator-connectivity-example"
+scenario = "nominal_recovery"
+control_enabled = true
+compliance_voltage_v = 1.0 # Synthetic test policy, NOT an approved live voltage.

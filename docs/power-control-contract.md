@@ -1,3 +1,8 @@
+> Current input extension: normal prepare/enable/set now require action_context,
+> and record_conditioning_decision records non-actuating judgments/completion.
+> See [session recording contract](session-recording-contract.md). Existing
+> structured power results and hardware rules below remain the baseline.
+
 # SPD3000 Power-Control MCP Contract
 
 ## Scope and status
@@ -22,7 +27,8 @@ unloaded-HIL path was physically exercised before the durable interlock was
 introduced; the v0.4.3 interlock is separately labeled offline-only in its
 structured diagnostics. This interface does not implement a conditioning state
 machine, pressure trip, activation inference, persistent output lease, watchdog,
-audit log, or physical interlock.
+or physical interlock. Ordinary session JSONL/CSV records are now provided by
+the separate MCP recording adapter.
 
 ## Hidden immutable policy
 

@@ -24,7 +24,7 @@ Network exposure does not change the independent control_enabled setting.
 
 ## Native-client request policy
 
-All requests with an Origin header, including empty or null values, receive
+MCP requests to /mcp with an Origin header, including empty or null values, receive
 403. Native MCP clients omit this header. Browser client support requires a
 later explicit policy. The local listener also uses SDK exact Host checks for
 127.0.0.1 and localhost at the configured port. The remote listener accepts
@@ -38,7 +38,8 @@ forwarding may be used but is not required for control-enabled startup.
 ## Workflow boundaries
 
 Startup validates local configuration without connecting to instruments.
-The six MCP tools, identity checks, physical enable confirmations, fixed
+The six hardware tools plus one non-actuating declaration tool are served.
+The identity checks, physical enable confirmations, fixed
 current ceilings and steps, and unloaded-HIL durable interlock/reset boundaries
 are unchanged. Keep one writer per physical PSU. The operator owns live process
 administration, credentials, and initialization/reset; the execution agent uses
@@ -47,6 +48,10 @@ MCP tools during the run.
 Operator diagnostics may show useful nonsecret settings, paths, endpoints, and
 failure context. Model-facing errors remain sanitized, and tokens belong in
 neither output. Source development may use ordinary local debugging.
+
+The existing HTTP app also serves the passive `/dashboard` and its data/assets.
+Recording occurs only on tool calls, not dashboard polls. See the
+[session recording contract](session-recording-contract.md).
 
 See the [Pi quick guide](../deployment/raspberrypi/QUICK_COMMISSIONING.md).
 The [previous transport contract](archive/transport-deployment-contract-pre-network-pilot.md)

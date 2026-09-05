@@ -1,0 +1,297 @@
+"use strict";
+const el = id => document.getElementById(id);
+const selectedRun = new URLSearchParams(window.location.search).get("run") || "";
+const runQuery = "run=" + encodeURIComponent(selectedRun);
+let cursor = 0, generation = -1, metadata = {};
+let events = [], observations = [], controls = [], decisions = [];
+let chartReady = false, rendering = false, clockInitializedFor = null;
+const byId = new Map();
+const recordNumbers = new Map();
+let selectedId = null, truthRevision = null, truthRows = [];
+const shortId = id => recordNumbers.has(id) ? "#" + String(recordNumbers.get(id)).padStart(3, "0") : "Unloaded record";
+const actor = () => ({agent:"Agent",scripted:"Script",human:"Human"})[metadata.source] || "Caller";
+const toolLabel = name => ({
+read_vacuum_pressure:"Read vacuum pressure",read_dispenser_power_state:"Read power state",
+prepare_dispenser:"Prepare dispenser",prepare_dispenser_power:"Prepare dispenser power",
+enable_dispenser_output:"Enable output",set_dispenser_current:"Set load current",
+set_dispenser_load_current:"Set load current",shutdown_dispenser:"Turn output off",shutdown_dispenser_power:"Turn output off",
+record_conditioning_decision:"Record a judgment (no hardware action)"
+})[name] || (name || "Record").replaceAll("_"," ");
+function outcome(event) {
+  if (event.kind === "decision") return actor() + " decision";
+  if (event.kind === "call_intent") return "Requested";
+  const result = event.payload?.result;
+  const execution = result?._meta?.dispenser_conditioning?.execution || event.payload?.execution;
+  if (execution === "not_executed") return "Not executed";
+  if (event.kind === "call_error" || result?.isError || result?.is_error) return "Error / state uncertain";
+  return "Completed";
+}
+function highlightSelection() {
+  document.querySelectorAll("[data-record]").forEach(node => node.classList.toggle("highlight", node.dataset.record === selectedId));
+}
+const intentsByCall = new Map();
+const num = value => typeof value === "number" && Number.isFinite(value) ? value : null;
+const fmt = value => num(value) === null ? "—" : value.toLocaleString("en-US", { maximumFractionDigits: 4 });
+const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
+function virtualMinutes(row) {
+  if (num(row.virtual_time_s) !== null) return row.virtual_time_s / 60;
+  const event = byId.get(row.event_id) || row;
+  const ctx = event.payload?.action_context || event.payload?.arguments?.action_context;
+  if (typeof ctx?.decision_at === "string" && metadata.observed_time_origin) {
+    const seconds = (Date.parse(ctx.decision_at) - Date.parse(metadata.observed_time_origin)) / 1000;
+    if (Number.isFinite(seconds)) return seconds / 60;
+  }
+  const intent = intentsByCall.get(row.call_id);
+  return intent && intent !== event ? virtualMinutes(intent) : null;
+}
+const xFor = row => el("clock").value === "virtual" ? virtualMinutes(row) : row.recorded_at;
+
+function selectEvent(id, jump = false) {
+  const event = byId.get(id);
+  if (!event) { el("raw").textContent = `Referenced event ${id} is not in this session file.`; return; }
+  selectedId = id;
+  highlightSelection();
+  const linkedItem = [...document.querySelectorAll("[data-record]")].find(node => node.dataset.record === id);
+  if (linkedItem) linkedItem.parentElement.scrollTop += linkedItem.getBoundingClientRect().top - linkedItem.parentElement.getBoundingClientRect().top - 12;
+  const readable = el("readable"); readable.replaceChildren();
+  readable.append(text("h3", shortId(id) + " · " + outcome(event) + " · " + toolLabel(event.payload?.tool)));
+  const decision = event.kind === "decision" ? event : events.find(e => e.kind === "decision" && e.decision_id === event.decision_id);
+  const ctx = decision?.payload?.action_context;
+  const chosenAction = ctx?.action ?? decision?.payload?.chosen_action;
+  const statedReason = ctx?.rationale_summary ?? decision?.payload?.rationale_summary;
+  const supportingIds = ctx?.observation_ids ?? decision?.payload?.basis_event_ids ?? [];
+  const args = event.payload?.arguments || {};
+  if (chosenAction) readable.append(text("p", actor() + " chose: " + chosenAction));
+  if (statedReason) readable.append(text("p", "Stated reason: " + statedReason));
+  if (num(args.target_current_a) !== null) readable.append(text("p", "Requested load-current target: " + fmt(args.target_current_a) + " A"));
+  if (num(args.expected_current_a) !== null) readable.append(text("p", "Expected previous load-current setting: " + fmt(args.expected_current_a) + " A (must match before the change)."));
+  readable.append(text("p", "MCP receipt: " + (event.payload?.received_at || event.received_at || event.recorded_at) + " · Source observation: " + (observations.find(r => r.event_id === id)?.observed_at || event.observed_at || event.payload?.result?.structuredContent?.observed_at || "not available")));
+  const links = text("div", "", "links");
+  for (const related of events.filter(e => (event.call_id && e.call_id === event.call_id) || (event.decision_id && e.decision_id === event.decision_id))) {
+    if (related.event_id !== id) links.append(eventButton(related.event_id, shortId(related.event_id) + " " + outcome(related), false));
+  }
+  for (const basis of supportingIds) links.append(eventButton(basis, "Supporting observation " + shortId(basis), false));
+  readable.append(links);
+  const row = observations.find(r => r.event_id === id);
+  if (row) readable.append(text("p", Object.entries(row).filter(([key,value]) => value !== null && ["pressure_mbar","commanded_load_current_limit_a","native_ch1_measured_current_a","native_ch1_measured_voltage_v","output_enabled"].includes(key)).map(([key,value]) => ({
+pressure_mbar: "Total pressure: " + Number(value).toExponential(3) + " mbar",
+commanded_load_current_limit_a: "Returned load-current setting: " + value + " A",
+native_ch1_measured_current_a: "Measured CH1 current: " + value + " A",
+native_ch1_measured_voltage_v: "Measured CH1 voltage: " + value + " V",
+output_enabled: "Output: " + (value ? "ON" : "OFF")
+})[key]).join(" · ")));
+  el("raw").textContent = JSON.stringify(event, null, 2);
+  el("selection-label").textContent = `${shortId(id)} · Recorded ${event.recorded_at} · Full ID in original JSON`;
+  if (jump && chartReady) {
+    const at = xFor(event);
+    if (at !== null) {
+      const range = el("clock").value === "virtual" ? [Math.max(0, at - 1), at + 1] : [new Date(Date.parse(at) - 30000).toISOString(), new Date(Date.parse(at) + 30000).toISOString()];
+      el("follow").checked = false;
+      Plotly.relayout("chart", { "xaxis.range": range, "xaxis.autorange": false });
+    }
+  }
+  el("selected").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function eventButton(id, label, jump = true) {
+  const button = text("button", label); button.addEventListener("click", () => selectEvent(id, jump)); return button;
+}
+
+function updatePanels() {
+  const p = observations.filter(r => num(r.pressure_mbar) !== null).at(-1);
+  const power = observations.filter(r => r.observation_kind === "power").at(-1);
+  el("pressure").textContent = p ? `${p.pressure_mbar.toExponential(3)} mbar` : "—";
+  el("set").textContent = power ? `${fmt(power.commanded_load_current_limit_a)} A` : "—";
+  el("actual").textContent = power ? `${fmt(power.native_ch1_measured_current_a)} A` : "—";
+  el("output").textContent = power?.output_enabled === true ? "ON" : power?.output_enabled === false ? "OFF" : "—";
+  el("decisions").replaceChildren();
+  for (const row of [...decisions].reverse()) {
+    const card = text("article", "", "card"); card.dataset.record = row.event_id;
+    card.append(text("small", `${shortId(row.event_id)} · ${actor()} decision: ${row.decision_at || "not supplied"} · MCP receipt: ${row.received_at || row.recorded_at}`), text("h3", row.chosen_action), text("p", row.rationale_summary));
+    if (row.background) card.append(text("p", row.background, "muted"));
+    if (row.confidence_claim) card.append(text("p", `Self-reported confidence: ${row.confidence_value ?? "unknown"} · Claim: ${row.confidence_claim}`, "muted"));
+    if (row.completion_outcome) card.append(text("p", `${actor()} assessment: ${row.completion_outcome} · Dispenser response: ${row.dispenser_response}. This assessment does not confirm output OFF or successful activation.`, "banner"));
+    const links = text("div", "", "links"); links.append(eventButton(row.event_id, "Decision record"));
+    for (const id of JSON.parse(row.basis_event_ids_json || "[]")) links.append(eventButton(id, `Supporting observation ${shortId(id)} ↗`));
+    card.append(links); el("decisions").append(card);
+  }
+  if (!decisions.length) el("decisions").append(text("div", "No decisions recorded. No rationale is inferred from calls.", "empty"));
+  el("events").replaceChildren();
+  for (const event of events.filter(e => e.kind !== "decision").reverse()) {
+    const failed = event.kind === "call_error" || event.payload.result?.isError === true || event.payload.result?.is_error === true;
+    const line = text("div", "", "event"); line.dataset.record = event.event_id;
+    line.append(eventButton(event.event_id, `${shortId(event.event_id)} · ${event.kind === "call_intent" ? actor() + " → MCP" : "MCP → " + actor()} · ${toolLabel(event.payload.tool)} · ${outcome(event)} · ${event.recorded_at}`));
+    if (failed) line.classList.add("error");
+    el("events").append(line);
+  }
+  highlightSelection();
+}
+
+async function draw() {
+  if (!window.Plotly) { el("status").textContent = "Local Plotly bundle could not load."; return; }
+  const axis = el("clock").value;
+  function trace(field, name, color, panel, filter = () => true, dash) {
+    const rows = observations.filter(r => filter(r) && xFor(r) !== null);
+    return { type: "scatter", mode: "lines+markers", name, x: rows.map(xFor), y: rows.map(r => num(r[field])),
+      xaxis: panel === 1 ? "x" : `x${panel}`, yaxis: panel === 1 ? "y" : `y${panel}`,
+      line: { color, width: 2, dash, shape: field.includes("setpoint") || field.includes("limit") ? "hv" : "linear" },
+      marker: { size: 4 }, connectgaps: false, customdata: rows.map(r => r.event_id),
+      text: rows.map(r => shortId(r.event_id)), hovertemplate: "%{text}<br>%{x}<br>%{y}<extra>" + name + "</extra>" };
+  }
+  const traces = [
+    trace("pressure_mbar", "Observed total pressure · mbar", "#e1c77c", 1, r => r.observation_kind === "pressure"),
+    trace("commanded_load_current_limit_a", "Returned commanded load limit · A", "#8cafe2", 2, r => r.observation_kind === "power"),
+    trace("native_ch1_measured_current_a", "Measured native CH1 · A", "#6edbc9", 2, r => r.observation_kind === "power"),
+    trace("native_ch1_voltage_setpoint_v", "Native voltage setpoint · V", "#c7a4e9", 3, r => r.observation_kind === "power"),
+    trace("native_ch1_measured_voltage_v", "Measured native CH1 voltage · V", "#80c8e5", 3, r => r.observation_kind === "power"),
+  ];
+  const requested = controls.filter(r => r.phase === "call_intent" && xFor(r) !== null && num(r.requested_load_current_a) !== null);
+  traces.push({ type: "scatter", mode: "markers", name: "Requested load target · A", x: requested.map(xFor), y: requested.map(r => r.requested_load_current_a), xaxis: "x2", yaxis: "y2", marker: { color: "#efbc72", symbol: "diamond-open", size: 9 }, customdata: requested.map(r => r.event_id), text: requested.map(r => shortId(r.event_id)), hovertemplate: "%{text}<br>Requested load: %{y} A<extra></extra>" });
+  for (const [status, y, color, symbol, label] of [["intent", 3, "#efbc72", "diamond-open", "Requested"], ["succeeded", 2, "#6edbc9", "circle", "Completed"], ["not_executed", 1, "#cbb9ff", "square-open", "Not executed"], ["failed", 0, "#fb978d", "x", "Error / state uncertain"]]) {
+    const rows = controls.filter(r => (status === "not_executed" ? outcome(byId.get(r.event_id)) === "Not executed" : r.status === status && outcome(byId.get(r.event_id)) !== "Not executed") && xFor(r) !== null);
+    traces.push({ type: "scatter", mode: "markers", name: label, x: rows.map(xFor), y: rows.map(() => y), xaxis: "x4", yaxis: "y4", marker: { color, symbol, size: 10 }, customdata: rows.map(r => r.event_id), text: rows.map(r => `${shortId(r.event_id)} · ${toolLabel(r.tool)}<br>${outcome(byId.get(r.event_id))}<br>${r.error || ""}${el("clock").value === "virtual" && !r.observed_at ? "<br>Position: agent-declared decision time (not an observation)" : ""}`), hovertemplate: "%{text}<extra></extra>" });
+  }
+  const axisBase = { type: axis === "wall" ? "date" : "linear", gridcolor: "#304254", zeroline: false, title: { text: axis === "wall" ? "Recorded wall time · UTC" : "Virtual elapsed minutes" }, automargin: true };
+  const layout = { paper_bgcolor: "#152330", plot_bgcolor: "#152330", font: { color: "#c9d8e5", size: 11 }, margin: { t: 60, r: 30, b: 45, l: 95 }, height: 800, hovermode: "closest", dragmode: "zoom", uirevision: `${metadata.session_id}:${generation}:${axis}`, legend: { orientation: "h", x: 0, y: 1.1, font: { size: 10 } },
+    xaxis: { ...axisBase, anchor: "y", showticklabels: false, title: null },
+    xaxis2: { ...axisBase, anchor: "y2", matches: "x", showticklabels: false, title: null },
+    xaxis3: { ...axisBase, anchor: "y3", matches: "x", showticklabels: false, title: null },
+    xaxis4: { ...axisBase, anchor: "y4", matches: "x" },
+    yaxis: { domain: [0.76, 1], title: { text: "Pressure · mbar" }, type: "log", tickformat: ".3e", exponentformat: "e", nticks: 5, gridcolor: "#304254", automargin: true },
+    yaxis2: { domain: [0.49, 0.71], title: { text: "Current · A" }, gridcolor: "#304254", rangemode: "tozero", automargin: true },
+    yaxis3: { domain: [0.23, 0.44], title: { text: "Voltage · V" }, gridcolor: "#304254", rangemode: "tozero", automargin: true },
+    yaxis4: { domain: [0, 0.17], title: { text: "Power requests<br>and results" }, tickvals: [0, 1, 2, 3], ticktext: ["Error / uncertain", "Not executed", "Completed", "Requested"], range: [-0.5, 3.5], gridcolor: "#304254", automargin: true } };
+  if (el("follow").checked) for (const key of ["xaxis", "xaxis2", "xaxis3", "xaxis4"]) layout[key].autorange = true;
+  rendering = true;
+  await Plotly.react("chart", traces, layout, { responsive: true, displaylogo: false, scrollZoom: true });
+  if (!chartReady) {
+    el("chart").on("plotly_click", data => { const id = data.points[0]?.customdata; if (id) selectEvent(id); });
+    el("chart").on("plotly_relayout", changes => { if (!rendering && Object.keys(changes).some(key => key.includes("range["))) el("follow").checked = false; });
+  }
+  chartReady = true; rendering = false;
+}
+
+async function poll() {
+  try {
+    const response = await fetch(`/api/session?after=${cursor}&generation=${generation}&${runQuery}`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
+    if (!response.ok) { const problem = await response.json(); throw new Error(problem.error || `HTTP ${response.status}`); }
+    const data = await response.json();
+    el("view-mode").textContent = data.recording_view === "saved_recording" ? "SAVED RUN" : "LIVE VIEW · current process";
+    const changed = data.reset || (data.events?.length || 0) > 0;
+    if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); recordNumbers.clear(); selectedId = null; }
+    metadata = data.metadata || metadata;
+    if (metadata.session_id && clockInitializedFor !== metadata.session_id) {
+      el("clock").value = metadata.session_kind === "simulated" && metadata.observed_time_origin ? "virtual" : "wall";
+      clockInitializedFor = metadata.session_id;
+    }
+    generation = data.generation ?? generation; cursor = data.cursor ?? cursor;
+    events.push(...(data.events || [])); observations.push(...(data.observations || [])); controls.push(...(data.controls || [])); decisions.push(...(data.decisions || []));
+    for (const event of data.events || []) { byId.set(event.event_id, event); recordNumbers.set(event.event_id, recordNumbers.size + 1); if (event.kind === "call_intent") intentsByCall.set(event.call_id, event); }
+    const simulated = metadata.session_kind === "simulated", live = metadata.session_kind === "live";
+    el("mode").className = "mode-strip" + (live ? " live" : "");
+    el("mode").replaceChildren(text("div", simulated ? "◈ SIMULATION" : live ? "◆ LIVE HARDWARE" : "? FIXTURE / SOURCE UNKNOWN"), text("small", live ? "Hardware-source recording. This banner does NOT mean output is energized or measurements are current." : "Simulated equipment only — no real equipment is connected to this recording."));
+    el("decision-heading").textContent = actor() + " decisions and reasons";
+    el("title").textContent = metadata.label || "Observations, actions, decisions";
+    el("provenance").textContent = metadata.session_kind ? `Requests and decisions from: ${actor()}` : "Waiting to learn who made the requests.";
+    el("session-details").textContent = `Session ${metadata.session_id || "not available"} · ${metadata.session_kind || "unknown source"}. ${metadata.session_kind === "live" ? "Hardware-source records do not establish current output state." : "Synthetic, uncalibrated data; not hardware evidence. Scripted demonstrations are not AI blind runs."}`;
+    el("decision-caption").textContent = `Reasons submitted by ${actor()} with links to the readings used.`;
+    el("provenance").className = metadata.session_kind && metadata.session_kind !== "live" ? "banner synthetic" : "banner";
+    el("source").textContent = `${data.recording_view === "saved_recording" ? "SAVED RECORDING / REPLAY VIEW" : "PROCESS SESSION RECORDS"} · File checked ${new Date().toISOString()} · ${changed ? "Records updated" : "No new records this check"} · Read-only source: ${data.source || "not configured"}`;
+    const lastObservation = observations.at(-1);
+    const observedAgo = lastObservation ? Math.max(0, (Date.now() - Date.parse(lastObservation.recorded_at)) / 1000) : null;
+    el("observation-age").textContent = lastObservation ? `Last source observation: ${lastObservation.observed_at || "unavailable"} · Received/recorded ${Math.floor(observedAgo)} s ago. New observations appear only when a caller invokes a reading or action; this page does not measure.` : "No observation yet. This dashboard does not sample instruments.";
+    el("status").textContent = `${events.length} records · ${observations.length} readings · ${controls.filter(c => c.phase === "call_intent").length} power requests · ${decisions.length} decisions${data.message ? "\n" + data.message : ""}${data.errors ? `\n${data.errors} unreadable record(s): ${data.last_error}` : ""}`;
+    el("status").className = data.status === "error" || data.errors ? "error" : "";
+    if (changed) { updatePanels(); await draw(); }
+    await pollTruth();
+  } catch (error) { el("status").textContent = `Read/connection error: ${error.message}. Displayed data may be stale.`; el("status").className = "error"; }
+  setTimeout(poll, 1000);
+}
+async function pollTruth() {
+  const section = el("inside");
+  section.hidden = metadata.session_kind !== "simulated";
+  if (section.hidden) return;
+  try {
+    const response = await fetch("/api/simulation-state?" + runQuery, {cache:"no-store", signal:AbortSignal.timeout(5000)});
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const data = await response.json();
+    el("truth-status").textContent = data.status + " · " + (data.message || "Model snapshots available") + (data.errors ? " · Invalid rows: " + data.errors : "");
+    const rows = data.rows || [];
+    truthRows = rows;
+    const revision = JSON.stringify([data.status,data.generation,rows.length,rows.at(-1)?.sequence,data.run_id]);
+    if (revision === truthRevision) return;
+    truthRevision = revision;
+    if (data.status !== "ready" || !rows.length) { Plotly.purge("truth-chart"); return; }
+    const p = data.parameters || rows[0]?.parameters || {};
+    const last = rows.at(-1).state;
+    el("truth-parameters").textContent = "Synthetic loading: initial Rb " + fmt(p.initial_rb_effective_units) + " units; initial impurity " + fmt(p.initial_impurity_effective_units) + " units; ratio " + fmt(p.initial_rb_to_impurity_effective_ratio) + " (not measured mass/composition). Fixed resistance " + fmt(p.resistance_ohm) + " Ω. Remaining: Rb " + fmt(num(last.rb_remaining_fraction) === null ? null : last.rb_remaining_fraction * 100) + "%; impurity " + fmt(num(last.impurity_remaining_fraction) === null ? null : last.impurity_remaining_fraction * 100) + "%. Thermal state is normalized, not kelvin.";
+    const series = (field,name,color,panel,scale=1) => ({type:"scatter",mode:"lines",name,
+      x:rows.map(r=>r.virtual_time_s/60),y:rows.map(r=>num(r.state[field]) === null ? null : r.state[field]*scale),
+      xaxis:panel === 1 ? "x" : "x"+panel,yaxis:panel === 1 ? "y" : "y"+panel,
+      line:{color,width:2},connectgaps:false,customdata:rows.map(r=>r.sequence),text:rows.map(r=>"Model snapshot S"+r.sequence),
+      hovertemplate:"%{text}<br>%{x:.3f} virtual min<br>%{y}<extra>"+name+"</extra>"});
+    const traces = [
+      series("rb_remaining_fraction","Rb remaining · %","#e5bc75",1,100),
+      series("impurity_remaining_fraction","Impurity remaining · %","#80d8d0",1,100),
+      series("rb_release_rate_effective_units_per_s","Rb release · synthetic units/s","#e5bc75",2),
+      series("impurity_release_rate_effective_units_per_s","Impurity release · synthetic units/s","#80d8d0",2),
+      series("total_pressure_mbar","Total model pressure · mbar","#ffffff",3),
+      series("rb_pressure_mbar","Rb model pressure · mbar","#e5bc75",3),
+      series("impurity_pressure_mbar","Impurity model pressure · mbar","#80d8d0",3),
+      series("background_pressure_mbar","Background model pressure · mbar","#91a9ca",3)
+    ];
+    const base={gridcolor:"#304254",automargin:true};
+    await Plotly.react("truth-chart",traces,{paper_bgcolor:"#152330",plot_bgcolor:"#152330",font:{color:"#c9d8e5"},height:640,
+      margin:{t:90,b:50,l:95,r:25},uirevision:metadata.session_id+":"+data.run_id,
+      legend:{orientation:"h",y:1.18,font:{size:10}},
+      xaxis:{...base,anchor:"y",showticklabels:false},
+      xaxis2:{...base,anchor:"y2",matches:"x",showticklabels:false},
+      xaxis3:{...base,anchor:"y3",matches:"x",title:{text:"Virtual elapsed minutes · model snapshots"}},
+      yaxis:{...base,domain:[.72,1],range:[0,100],title:{text:"Remaining · %"}},
+      yaxis2:{...base,domain:[.38,.64],rangemode:"tozero",title:{text:"Release · units/s"}},
+      yaxis3:{...base,domain:[0,.29],type:"log",tickformat:".3e",title:{text:"Model pressure · mbar"}}
+    },{responsive:true,displaylogo:false});
+    el("truth-chart").removeAllListeners("plotly_click");
+    el("truth-chart").on("plotly_click", clicked => {
+      const row = truthRows.find(r => r.sequence === clicked.points[0]?.customdata);
+      if (!row) return;
+      el("truth-selected").textContent = "Model snapshot S" + row.sequence + " · " + fmt(row.virtual_time_s / 60) + " virtual minutes · Rb remaining " + fmt(num(row.state.rb_remaining_fraction) === null ? null : row.state.rb_remaining_fraction * 100) + "% · Impurity remaining " + fmt(num(row.state.impurity_remaining_fraction) === null ? null : row.state.impurity_remaining_fraction * 100) + "%. Model state only; not a supporting observation.";
+      el("truth-raw").textContent = JSON.stringify(row,null,2);
+      el("truth-selected").classList.add("highlight");
+      el("truth-selected").scrollIntoView({behavior:"smooth",block:"center"});
+    });
+  } catch (error) { el("truth-status").textContent = "Model state unavailable: " + error.message; }
+}
+el("clock").addEventListener("change", draw);
+el("fit").addEventListener("click", () => Plotly.relayout("chart", { "xaxis.autorange": true, "xaxis2.autorange": true, "xaxis3.autorange": true, "xaxis4.autorange": true, "yaxis.autorange": true, "yaxis2.autorange": true, "yaxis3.autorange": true }));
+el("follow").addEventListener("change", draw);
+async function refreshRuns() {
+  try {
+    const response = await fetch("/api/runs", {cache:"no-store", signal:AbortSignal.timeout(5000)});
+    if (!response.ok) throw new Error("Cannot load run list");
+    const data = await response.json();
+    const picker = el("run-picker");
+    picker.replaceChildren();
+    for (const run of data.runs) {
+      const option = text("option", run.label + (run.available ? "" : " — Unavailable: " + run.reason));
+      option.value = run.key; option.disabled = !run.available;
+      picker.append(option);
+    }
+    if (![...picker.options].some(option => option.value === selectedRun)) {
+      const missing = text("option", "Selected run is unavailable: " + selectedRun);
+      missing.value = selectedRun; missing.disabled = true; picker.append(missing);
+    }
+    picker.value = selectedRun;
+    el("run-help").textContent = (data.live_view_available ? "Live view follows this process's records. " : "Saved-recording preview only; no live acquisition is attached. ") + "Selecting a run reloads only this page. It never starts, stops or resumes recording or equipment. Unavailable folders need the supported metadata/events format.";
+  } catch (error) { el("run-help").textContent = error.message + ". Current view is unchanged."; }
+}
+el("run-picker").addEventListener("change", event => {
+  const url = new URL(window.location.href);
+  if (event.target.value) url.searchParams.set("run",event.target.value);
+  else url.searchParams.delete("run");
+  // A new document discards every old fetch, cursor, selected detail and chart.
+  window.location.assign(url.href);
+});
+el("refresh-runs").addEventListener("click", refreshRuns);
+refreshRuns();
+poll();

@@ -26,6 +26,15 @@ from dispenser_conditioning_mcp.power_domain import (
     PowerControlError,
     PowerController,
 )
+from dispenser_conditioning_mcp.recording_service import (
+    DECLARATION_TOOL,
+    ActionContext,
+    CompletionAssessment,
+    DeclarationResult,
+    RecordingService,
+    error_result,
+    mark_execution_started,
+)
 
 READ_VACUUM_PRESSURE_TOOL = "read_vacuum_pressure"
 READ_POWER_STATE_TOOL = "read_dispenser_power_state"
@@ -37,9 +46,12 @@ SHUTDOWN_POWER_TOOL = "shutdown_dispenser_power"
 BASE_TOOL_ARGUMENTS: dict[str, frozenset[str]] = {
     READ_VACUUM_PRESSURE_TOOL: frozenset(),
     READ_POWER_STATE_TOOL: frozenset(),
-    PREPARE_POWER_TOOL: frozenset(),
-    SET_CURRENT_TOOL: frozenset({"target_current_a", "expected_current_a"}),
+    PREPARE_POWER_TOOL: frozenset({"action_context"}),
+    SET_CURRENT_TOOL: frozenset(
+        {"target_current_a", "expected_current_a", "action_context"}
+    ),
     SHUTDOWN_POWER_TOOL: frozenset(),
+    DECLARATION_TOOL: frozenset({"action_context", "completion"}),
 }
 
 
@@ -60,9 +72,11 @@ class DispenserConditioningMCPServer(MCPServer[None]):
         *,
         instructions: str,
         tool_arguments: Mapping[str, frozenset[str]],
+        recording: RecordingService,
     ) -> None:
         super().__init__(name, instructions=instructions)
         self._tool_arguments = dict(tool_arguments)
+        self.recording = recording
 
     async def list_tools(self) -> list[Tool]:
         tools = await super().list_tools()
@@ -75,11 +89,37 @@ class DispenserConditioningMCPServer(MCPServer[None]):
         context: Context[None, Any] | None = None,
     ) -> CallToolResult | InputRequiredResult:
         allowed = self._tool_arguments.get(name)
+        rejection = None
         if allowed is not None:
             unknown = set(arguments).difference(allowed)
+            if name == SHUTDOWN_POWER_TOOL:
+                unknown.discard("action_context")
             if unknown:
-                raise ToolError(f"{name} received an unsupported argument.")
-        return await super().call_tool(name, arguments, context)
+                rejection = f"Not executed: {name} received an unsupported argument."
+
+        async def dispatch(
+            tool_name: str, clean_arguments: dict[str, Any]
+        ) -> CallToolResult:
+            if tool_name != SHUTDOWN_POWER_TOOL and "action_context" in arguments:
+                clean_arguments = {
+                    **clean_arguments,
+                    "action_context": arguments["action_context"],
+                }
+            try:
+                result = await super(DispenserConditioningMCPServer, self).call_tool(
+                    tool_name, clean_arguments, context
+                )
+            except ToolError as error:
+                return error_result(str(error))
+            if isinstance(result, InputRequiredResult):
+                return error_result(
+                    "Not executed: interactive input rounds are unsupported for this instrument interface."
+                )
+            return result
+
+        return await self.recording.process_call(
+            name, arguments, dispatch, rejection=rejection
+        )
 
     def _strict_input_schema(self, tool: Tool) -> Tool:
         if tool.name not in self._tool_arguments:
@@ -91,7 +131,9 @@ class DispenserConditioningMCPServer(MCPServer[None]):
 def create_server(
     pressure_source: PressureObservationSource,
     power_controller: PowerController,
-) -> MCPServer[None]:
+    *,
+    recording: RecordingService | None = None,
+) -> DispenserConditioningMCPServer:
     """Build the MCP server around explicitly injected integrations."""
 
     acceptance_context = power_controller.acceptance_context
@@ -101,11 +143,14 @@ def create_server(
         if acceptance_context == "production_dispenser"
         else "unloaded_hil_connection_confirmation"
     )
-    tool_arguments[ENABLE_OUTPUT_TOOL] = frozenset({confirmation_argument})
-    server: MCPServer[None] = DispenserConditioningMCPServer(
+    tool_arguments[ENABLE_OUTPUT_TOOL] = frozenset(
+        {confirmation_argument, "action_context"}
+    )
+    server = DispenserConditioningMCPServer(
         "Dispenser Conditioning",
         instructions=_server_instructions(acceptance_context),
         tool_arguments=tool_arguments,
+        recording=recording or RecordingService(),
     )
 
     @server.tool(
@@ -121,6 +166,7 @@ def create_server(
         """Read one G1 total-pressure snapshot; never infer activation."""
 
         try:
+            mark_execution_started()
             return normalize_observation(pressure_source.read())
         except PressureObservationError as error:
             raise ToolError(
@@ -151,7 +197,7 @@ def create_server(
             open_world_hint=True,
         ),
     )
-    def prepare_dispenser_power() -> PowerActionResult:  # pyright: ignore[reportUnusedFunction]
+    def prepare_dispenser_power(action_context: ActionContext) -> PowerActionResult:  # pyright: ignore[reportUnusedFunction]
         """Overwrite state: output off, zero current, then fixed compliance voltage."""
 
         return _power_call(power_controller.prepare)
@@ -168,6 +214,7 @@ def create_server(
         ),
     )
     def set_dispenser_current(  # pyright: ignore[reportUnusedFunction]
+        action_context: ActionContext,
         target_current_a: Annotated[
             float,
             Field(
@@ -215,6 +262,22 @@ def create_server(
 
         return _power_call(power_controller.shutdown)
 
+    @server.tool(
+        name=DECLARATION_TOOL,
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=True,
+        ),
+    )
+    def record_conditioning_decision(  # pyright: ignore[reportUnusedFunction]
+        action_context: ActionContext,
+        completion: CompletionAssessment | None = None,
+    ) -> DeclarationResult:
+        """Record stated judgment or completion without actuation; not an OFF or activation claim."""
+        return DeclarationResult(action_context=action_context, completion=completion)
+
     return server
 
 
@@ -237,6 +300,7 @@ def _register_enable_tool(
             annotations=annotations,
         )
         def enable_production_dispenser_output(  # pyright: ignore[reportUnusedFunction]
+            action_context: ActionContext,
             parallel_connection_confirmation: Annotated[
                 Literal["confirmed_parallel_ch1"],
                 Field(
@@ -269,6 +333,7 @@ def _register_enable_tool(
         annotations=annotations,
     )
     def enable_unloaded_hil_output(  # pyright: ignore[reportUnusedFunction]
+        action_context: ActionContext,
         unloaded_hil_connection_confirmation: Annotated[
             Literal["confirmed_no_dispenser_or_unapproved_load_connected"],
             Field(
@@ -317,6 +382,13 @@ def _server_instructions(acceptance_context: PowerAcceptanceContext) -> str:
             "available through MCP."
         )
     return (
+        "Each normal prepare/enable/set call requires brief action_context with the "
+        "session and observation IDs returned in result metadata/text. Supply your "
+        "decision time, action/background, stated rationale, and claim-specific "
+        "confidence; this is recorded judgment, not a safety authorization. Use "
+        "record_conditioning_decision for a hold or finish without actuation. "
+        "Completion is an agent assessment, separate from verified output-off. "
+        "shutdown_dispenser_power needs no context. "
         f"{physical_instruction} Never infer external wiring or no-load state from "
         "instrument mode. Observe configured total vacuum pressure and control one "
         "operator-bound Siglent SPD3000 topology through deterministic safety "
@@ -331,6 +403,7 @@ def _server_instructions(acceptance_context: PowerAcceptanceContext) -> str:
 
 def _power_call[T](operation: Callable[[], T]) -> T:
     try:
+        mark_execution_started()
         return operation()
     except PowerControlError as error:
         raise ToolError(error.public_message) from error
