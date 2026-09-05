@@ -67,7 +67,7 @@ main()
             Client(f"http://127.0.0.1:{port}/mcp") as client,
         ):
             catalog = (await client.list_tools()).tools
-            assert len(catalog) == 7
+            assert len(catalog) == 8
             schemas = {tool.name: tool.input_schema for tool in catalog}
             assert (
                 schemas["read_vacuum_pressure"]["properties"]["elapsed_s"]["maximum"]

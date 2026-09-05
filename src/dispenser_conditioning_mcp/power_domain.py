@@ -290,7 +290,7 @@ class PowerController(Protocol):
 
 
 class PowerSafetyLimits(BaseModel):
-    """Immutable startup policy visible to the model but not changeable by it."""
+    """Operator policy snapshot; only the file-owned current cap is reloadable."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

@@ -5,11 +5,22 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from mcp.types import CallToolResult, TextContent
 
+from dispenser_conditioning_mcp.config import (
+    ConfigurationError,
+    SourceLayout,
+    read_max_load_current,
+)
+from dispenser_conditioning_mcp.current_limit import (
+    RELOAD_CURRENT_LIMIT_TOOL,
+    CurrentLimitReloadResult,
+    reload_result,
+)
 from dispenser_conditioning_mcp.recording_service import (
     RecordingService,
     mark_execution_started,
@@ -37,10 +48,35 @@ def create_recording_service(environment: Mapping[str, str]) -> RecordingService
 
 
 class RecordingAdapter:
-    def __init__(self, router: ToolRouter, service: RecordingService):
+    def __init__(
+        self,
+        router: ToolRouter,
+        service: RecordingService,
+        *,
+        layout: SourceLayout | None = None,
+    ):
+        self.layout = layout
         self.router = router
         self.service = service
         self.catalog = recording_tool_specs(router.simulator.config.acceptance_context)
+        self.catalog.append(
+            {
+                "name": RELOAD_CURRENT_LIMIT_TOOL,
+                "description": "Apply only operator max_load_current_A from canonical settings; no arguments, actuation, or simulated time advance. Missing/invalid value preserves old cap.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+                "outputSchema": CurrentLimitReloadResult.model_json_schema(),
+                "annotations": {
+                    "readOnlyHint": False,
+                    "destructiveHint": False,
+                    "idempotentHint": True,
+                    "openWorldHint": False,
+                },
+            }
+        )
         self._schemas = {spec["name"]: spec["inputSchema"] for spec in self.catalog}
         observer = router.simulator.observer
         if observer.path is not None:
@@ -95,6 +131,31 @@ class RecordingAdapter:
         )
 
     async def _dispatch(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
+        if name == RELOAD_CURRENT_LIMIT_TOOL:
+            try:
+                if self.layout is None:
+                    raise ConfigurationError("No operator settings layout configured")
+                cap = read_max_load_current(self.layout)
+                previous = self.router.simulator.config.max_load_current_a
+                self.router.simulator.config = replace(
+                    self.router.simulator.config, max_load_current_a=cap
+                )
+                mark_execution_started()
+                result = reload_result(previous, cap).model_dump(mode="json")
+                return CallToolResult(
+                    content=[TextContent(type="text", text=json.dumps(result))],
+                    structured_content=result,
+                )
+            except ConfigurationError:
+                return CallToolResult(
+                    is_error=True,
+                    content=[
+                        TextContent(
+                            type="text",
+                            text="Current limit was not changed: operator max_load_current_A is missing/invalid or settings unreadable.",
+                        )
+                    ],
+                )
         previous_timing = self.router.simulator.timing
         try:
             mark_execution_started()

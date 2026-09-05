@@ -11,6 +11,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, InputRequiredResult, Tool, ToolAnnotations
 from pydantic import BeforeValidator, Field
 
+from dispenser_conditioning_mcp.config import ConfigurationError
+from dispenser_conditioning_mcp.current_limit import (
+    RELOAD_CURRENT_LIMIT_TOOL,
+    CurrentLimitReloadResult,
+)
 from dispenser_conditioning_mcp.domain import (
     PressureObservationError,
     PressureObservationSource,
@@ -44,6 +49,7 @@ SET_CURRENT_TOOL = "set_dispenser_current"
 SHUTDOWN_POWER_TOOL = "shutdown_dispenser_power"
 
 BASE_TOOL_ARGUMENTS: dict[str, frozenset[str]] = {
+    RELOAD_CURRENT_LIMIT_TOOL: frozenset(),
     READ_VACUUM_PRESSURE_TOOL: frozenset(),
     READ_POWER_STATE_TOOL: frozenset(),
     PREPARE_POWER_TOOL: frozenset({"action_context"}),
@@ -133,6 +139,8 @@ def create_server(
     power_controller: PowerController,
     *,
     recording: RecordingService | None = None,
+    reload_current_limit: Callable[[], CurrentLimitReloadResult] | None = None,
+    initial_max_load_current_A: float = 4.8,
 ) -> DispenserConditioningMCPServer:
     """Build the MCP server around explicitly injected integrations."""
 
@@ -148,10 +156,34 @@ def create_server(
     )
     server = DispenserConditioningMCPServer(
         "Dispenser Conditioning",
-        instructions=_server_instructions(acceptance_context),
+        instructions=_server_instructions(acceptance_context)
+        + f" Initial operator combined-load current cap: {initial_max_load_current_A:g} A (absolute ceiling 4.8 A). Operator may edit max_load_current_A and reload_dispenser_current_limit applies only that field. Cached schemas retain absolute bounds; state/reload results report the current cap.",
         tool_arguments=tool_arguments,
         recording=recording or RecordingService(),
     )
+
+    @server.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        )
+    )
+    def reload_dispenser_current_limit() -> CurrentLimitReloadResult:  # pyright: ignore[reportUnusedFunction]
+        """Apply only operator max_load_current_A from canonical settings; no arguments, actuation, or time advance. Missing/invalid value preserves old cap."""
+        if reload_current_limit is None:
+            raise ToolError(
+                "Current-limit reload is unavailable in this injected server."
+            )
+        try:
+            result = reload_current_limit()
+            mark_execution_started()
+            return result
+        except ConfigurationError as error:
+            raise ToolError(
+                "Current limit was not changed: operator max_load_current_A is missing/invalid or settings unreadable."
+            ) from error
 
     @server.tool(
         title="Read vacuum pressure",
@@ -393,8 +425,8 @@ def _server_instructions(acceptance_context: PowerAcceptanceContext) -> str:
         "instrument mode. Observe configured total vacuum pressure and control one "
         "operator-bound Siglent SPD3000 topology through deterministic safety "
         "checks. Connection, channel, topology, identity, acceptance context, and "
-        "ceilings are startup configuration and cannot be selected or raised by a "
-        "tool call. Pressure is total gauge pressure, not rubidium partial pressure, "
+        "absolute ceilings are operator-bound and cannot be supplied by a "
+        "tool call. Only the operator current cap can be reapplied from its canonical file. Pressure is total gauge pressure, not rubidium partial pressure, "
         "and does not verify dispenser activation. Power readbacks do not verify "
         "activation either. This draft is not an unattended conditioning "
         "orchestrator or physical interlock."

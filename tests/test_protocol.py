@@ -212,6 +212,7 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
         tools = (await client.list_tools()).tools
 
     assert [tool.name for tool in tools] == [
+        "reload_dispenser_current_limit",
         "read_vacuum_pressure",
         "read_dispenser_power_state",
         "prepare_dispenser_power",
@@ -306,7 +307,12 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
     assert annotations("set_dispenser_current").idempotent_hint is False
     assert annotations("shutdown_dispenser_power").destructive_hint is True
     assert annotations("shutdown_dispenser_power").idempotent_hint is True
-    assert all(annotations(tool.name).open_world_hint is True for tool in tools)
+    assert all(
+        annotations(tool.name).open_world_hint is True
+        for tool in tools
+        if tool.name != "reload_dispenser_current_limit"
+    )
+    assert annotations("reload_dispenser_current_limit").open_world_hint is False
 
 
 @pytest.mark.anyio

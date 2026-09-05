@@ -95,6 +95,7 @@ class McpStartupConfiguration:
     control_enabled: bool = False
     allow_remote_access: bool = False
     port: int = 8000
+    max_load_current_A: float = 4.8
 
     @classmethod
     def from_toml(cls, layout: SourceLayout) -> McpStartupConfiguration:
@@ -112,11 +113,14 @@ class McpStartupConfiguration:
                 "control_enabled",
                 "allow_remote_access",
                 "port",
+                "max_load_current_A",
             },
             "MCP settings",
         )
         if document.get("backend", "hardware") != "hardware":
-            raise ConfigurationError("Hardware configuration requires backend = hardware")
+            raise ConfigurationError(
+                "Hardware configuration requires backend = hardware"
+            )
         acceptance_context = cast(
             PowerAcceptanceContext,
             _choice(
@@ -157,6 +161,7 @@ class McpStartupConfiguration:
             control_enabled=control_enabled,
             allow_remote_access=allow_remote_access,
             port=port,
+            max_load_current_A=parse_max_load_current(document),
         )
 
 
@@ -269,7 +274,7 @@ class SiglentConfiguration:
             expected_model="SPD3303X",
             expected_serial_number=startup.expected_serial_number,
             compliance_voltage_v=startup.compliance_voltage_v,
-            max_load_current_a=PARALLEL_LOAD_CURRENT_CEILING_A,
+            max_load_current_a=startup.max_load_current_A,
             upward_step_a=PARALLEL_LOAD_UPWARD_STEP_A,
             control_enabled=startup.control_enabled,
             timeout_s=_number(
@@ -424,3 +429,26 @@ def _require_resolution(value: float, *, resolution: float, name: str) -> None:
         raise ConfigurationError(
             f"{name} must align to the fixed model resolution {resolution}."
         )
+
+
+def parse_max_load_current(
+    document: Mapping[str, object], *, required: bool = False
+) -> float:
+    value = document.get("max_load_current_A", None if required else 4.8)
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or not 0 < value <= 4.8
+    ):
+        raise ConfigurationError(
+            "max_load_current_A must be a finite number greater than 0 and at most 4.8 A"
+        )
+    return float(value)
+
+
+def read_max_load_current(layout: SourceLayout) -> float:
+    """Reload exactly one required field; no other startup settings are applied."""
+    return parse_max_load_current(
+        _read_toml(layout.mcp_settings_file, "MCP settings"), required=True
+    )

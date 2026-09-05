@@ -8,6 +8,7 @@ import sys
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -18,6 +19,12 @@ from dispenser_conditioning_mcp.config import (
     PARALLEL_LOAD_CURRENT_CEILING_A,
     PARALLEL_NATIVE_CURRENT_CEILING_A,
     SiglentConfiguration,
+    SourceLayout,
+    read_max_load_current,
+)
+from dispenser_conditioning_mcp.current_limit import (
+    CurrentLimitReloadResult,
+    reload_result,
 )
 from dispenser_conditioning_mcp.power_domain import (
     DRIVER_VALIDATION_STATUS,
@@ -285,70 +292,78 @@ class DispenserPowerController:
 
         return self._control("enable_dispenser_output", operation)
 
+    def reload_current_limit(self, layout: SourceLayout) -> CurrentLimitReloadResult:
+        with self._lock:
+            cap = read_max_load_current(layout)
+            previous = self._configuration.max_load_current_a
+            self._configuration = replace(self._configuration, max_load_current_a=cap)
+            return reload_result(previous, cap)
+
     def set_current(
         self, *, target_current_a: float, expected_current_a: float
     ) -> PowerActionResult:
         """Compare-and-set one absolute load-current limit with bounded upward motion."""
 
-        target_native = self._validated_native_target(
-            target_current_a, enforce_ceiling=True
-        )
-        expected_native = self._validated_native_target(
-            expected_current_a, enforce_ceiling=False
-        )
-
-        def operation(
-            session: PowerSupplySession, identity: DeviceIdentity
-        ) -> PowerActionResult:
-            initial = self._state(identity, session.read_channel_state())
-            self._require_topology_from_state(initial)
-            if not initial.output_enabled:
-                raise PowerControlError(
-                    "Current change was rejected because the configured output is off."
-                )
-            if not initial.compliance_voltage_matches:
-                raise PowerControlError(
-                    "Current change was rejected because the live voltage setpoint "
-                    "does not match the operator-fixed compliance voltage."
-                )
-
-            live_native = initial.native_current_setpoint_a
-            live_is_target = self._native_close(live_native, target_native)
-            live_is_expected = self._native_close(live_native, expected_native)
-
-            if live_is_target:
-                self._require_valid_transition(expected_current_a, target_current_a)
-                return PowerActionResult(
-                    action="set_dispenser_current",
-                    wrote_hardware=False,
-                    state=initial,
-                )
-            if not live_is_expected:
-                raise PowerControlError(
-                    "Current change was rejected because the live setpoint does not "
-                    "match expected_current_a. Re-read state before deciding what to do."
-                )
-            self._require_valid_transition(expected_current_a, target_current_a)
-
-            with session.atomic_write_batch():
-                session.set_current_a(target_native)
-            state = self._state(identity, session.read_channel_state())
-            if (
-                not state.topology_matches
-                or not state.output_enabled
-                or not state.compliance_voltage_matches
-                or not self._native_close(
-                    state.native_current_setpoint_a, target_native
-                )
-            ):
-                raise RuntimeError("current-setpoint verification failed")
-            return PowerActionResult(
-                action="set_dispenser_current",
-                wrote_hardware=True,
-                state=state,
+        with self._lock:
+            target_native = self._validated_native_target(
+                target_current_a, enforce_ceiling=True
+            )
+            expected_native = self._validated_native_target(
+                expected_current_a, enforce_ceiling=False
             )
 
-        return self._control("set_dispenser_current", operation)
+            def operation(
+                session: PowerSupplySession, identity: DeviceIdentity
+            ) -> PowerActionResult:
+                initial = self._state(identity, session.read_channel_state())
+                self._require_topology_from_state(initial)
+                if not initial.output_enabled:
+                    raise PowerControlError(
+                        "Current change was rejected because the configured output is off."
+                    )
+                if not initial.compliance_voltage_matches:
+                    raise PowerControlError(
+                        "Current change was rejected because the live voltage setpoint "
+                        "does not match the operator-fixed compliance voltage."
+                    )
+
+                live_native = initial.native_current_setpoint_a
+                live_is_target = self._native_close(live_native, target_native)
+                live_is_expected = self._native_close(live_native, expected_native)
+
+                if live_is_target:
+                    self._require_valid_transition(expected_current_a, target_current_a)
+                    return PowerActionResult(
+                        action="set_dispenser_current",
+                        wrote_hardware=False,
+                        state=initial,
+                    )
+                if not live_is_expected:
+                    raise PowerControlError(
+                        "Current change was rejected because the live setpoint does not "
+                        "match expected_current_a. Re-read state before deciding what to do."
+                    )
+                self._require_valid_transition(expected_current_a, target_current_a)
+
+                with session.atomic_write_batch():
+                    session.set_current_a(target_native)
+                state = self._state(identity, session.read_channel_state())
+                if (
+                    not state.topology_matches
+                    or not state.output_enabled
+                    or not state.compliance_voltage_matches
+                    or not self._native_close(
+                        state.native_current_setpoint_a, target_native
+                    )
+                ):
+                    raise RuntimeError("current-setpoint verification failed")
+                return PowerActionResult(
+                    action="set_dispenser_current",
+                    wrote_hardware=True,
+                    state=state,
+                )
+
+            return self._control("set_dispenser_current", operation)
 
     def shutdown(self) -> PowerActionResult:
         """Turn output off before zeroing current; topology mismatch does not block it."""

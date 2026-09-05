@@ -38,7 +38,7 @@
   hardware policy fixed below.
 - Keep `parallel_ch1`, `CH1`, `SPD3303X`, the 2.4 A native ceiling, the 4.8 A
   commanded-load ceiling, and the exact 0.2 A upward step as code/contract
-  constants rather than configurable operator values.
+  constants. Operator max_load_current_A may impose a lower cap.
 - Never change tracking mode. Verify the live mode before preparing, enabling,
   or changing current. Identity mismatch must cause zero writes.
 - Treat `parallel_ch1` current as a commanded load-current limit derived from
@@ -193,3 +193,10 @@
 - Optional token_usage is caller-reported accounting, never automatic app usage,
   billing truth or a conditioning policy input. Preserve missing values; deduplicate
   usage_id per run for display, warn on conflicting repeats, keep raw submissions.
+- Operator top-level max_load_current_A is the only reloadable settings exception:
+  strict finite 0 < cap <= 4.8 A, startup default 4.8; reload requires the field.
+  reload_dispenser_current_limit accepts no arguments/context/path/value, reads
+  only canonical main settings, and changes no instrument output or simulation
+  time. Invalid reload leaves the previous cap intact. Serialize hardware reload
+  and target validation under the existing power lock. Keep all other settings
+  startup-only, static absolute schemas, and actual current-cap readback.

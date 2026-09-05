@@ -119,6 +119,7 @@ read_vacuum_pressure:"Read vacuum pressure",read_dispenser_power_state:"Read pow
 prepare_dispenser:"Prepare dispenser",prepare_dispenser_power:"Prepare dispenser power",
 enable_dispenser_output:"Enable output",set_dispenser_current:"Set load current",
 set_dispenser_load_current:"Set load current",shutdown_dispenser:"Turn output off",shutdown_dispenser_power:"Turn output off",
+reload_dispenser_current_limit:"Reload operator current cap (no actuation)",
 record_conditioning_decision:"Record a judgment (no hardware action)"
 })[name] || (name || "Record").replaceAll("_"," ");
 function outcome(event) {
@@ -176,6 +177,7 @@ function selectEvent(id, jump = false) {
   if(decision?.completion_outcome) readable.append(text("p",actor()+" assessment: "+decision.completion_outcome+" · Dispenser response: "+decision.dispenser_response+" (not proof of output OFF)."));
   if (chosenAction) readable.append(text("p", actor() + " chose: " + chosenAction));
   if (statedReason) readable.append(text("p", "Stated reason: " + statedReason));
+  if(num(event.applied_max_load_current_A)!==null) readable.append(text("p", "Operator current cap: "+fmt(event.previous_max_load_current_A)+" → "+fmt(event.applied_max_load_current_A)+" A; effective "+fmt(event.effective_max_load_current_A)+" A. "+event.notice));
   if(event.error) readable.append(text("p","MCP error: "+event.error,"error"));
   if (num(args.target_current_a) !== null) readable.append(text("p", "Requested load-current target: " + fmt(args.target_current_a) + " A"));
   if (num(args.expected_current_a) !== null) readable.append(text("p", "Expected previous load-current setting: " + fmt(args.expected_current_a) + " A (must match before the change)."));

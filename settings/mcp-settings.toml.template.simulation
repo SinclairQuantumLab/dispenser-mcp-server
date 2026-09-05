@@ -6,6 +6,11 @@ backend = "simulation"
 allow_remote_access = false
 # Integer TCP port 1024..65535, default 8000; change for a port conflict. MCP /mcp and dashboard share it.
 port = 8000
+# Combined commanded-load current cap in A: numeric >0 through 4.8; default 4.8.
+# Edit for an operator-approved lower cap. reload_dispenser_current_limit() applies only
+# this field without restart or actuation; include this key explicitly to use reload.
+# Lowering does not reduce an existing output. Inspect state; later targets must be <=cap.
+max_load_current_A = 4.8
 
 [simulation]
 # Required nonempty reproducibility seed string, no HTTP default. Operator chooses it before the process starts.

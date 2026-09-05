@@ -21,6 +21,7 @@ from dispenser_conditioning_mcp import run_directory
 from dispenser_conditioning_mcp.dashboard_access import DashboardAccess
 from dispenser_conditioning_mcp.session_records import (
     as_dict,
+    content_state,
     error_text,
     projections,
     result_failed,
@@ -218,6 +219,17 @@ def dashboard_record(event: dict[str, Any]) -> dict[str, Any]:
         for key, value in as_dict(payload.get("arguments")).items()
         if key not in {"action_context", "completion"}
     }
+    if payload.get("tool") == "reload_dispenser_current_limit":
+        state = content_state(result)
+        for key in (
+            "previous_max_load_current_A",
+            "applied_max_load_current_A",
+            "effective_max_load_current_A",
+            "hardware_changed",
+            "fresh_state_inspection_recommended",
+            "notice",
+        ):
+            view[key] = state.get(key)
     if arguments:
         view["requested_arguments"] = arguments
     timing = as_dict(as_dict(result.get("_meta")).get("simulation_timing"))

@@ -7,7 +7,11 @@ from typing import Any
 
 from mcp.server import MCPServer
 
-from dispenser_conditioning_mcp.config import ConfigurationError, SourceLayout
+from dispenser_conditioning_mcp.config import (
+    ConfigurationError,
+    SourceLayout,
+    parse_max_load_current,
+)
 from dispenser_conditioning_mcp.transport import McpTransportConfiguration
 
 
@@ -33,6 +37,7 @@ def create_startup_server(
         raise ConfigurationError("backend must be hardware or simulation")
     allowed = {
         "backend",
+        "max_load_current_A",
         "allow_remote_access",
         "port",
         "simulation",
@@ -52,5 +57,7 @@ def create_startup_server(
     from dispenser_conditioning_mcp.simulation_app import create_simulation_server
 
     return create_simulation_server(
-        document.get("simulation", {})
+        document.get("simulation", {}),
+        layout=layout,
+        max_load_current_A=parse_max_load_current(document),
     ), McpTransportConfiguration(remote, port)

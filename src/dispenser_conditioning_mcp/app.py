@@ -26,4 +26,11 @@ def create_configured_server(
         timeout_s=hicube.timeout_s,
     )
     power_controller = DispenserPowerController(operator.siglent)
-    return create_server(source, power_controller)
+    return create_server(
+        source,
+        power_controller,
+        reload_current_limit=lambda: power_controller.reload_current_limit(
+            operator.layout
+        ),
+        initial_max_load_current_A=operator.startup.max_load_current_A,
+    )

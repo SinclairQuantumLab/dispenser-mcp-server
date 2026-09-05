@@ -232,7 +232,7 @@ The saved-recording preview uses the identical guard and local operator flow.
 `backend = "simulation"` selects the canonical in-checkout Python simulator before
 hardware settings or adapters are loaded. The same HTTP process and access guard
 serve `/mcp` and the dashboard. The direct backend delegates once to the existing
-seven-tool RecordingAdapter: no proxy port, duplicate recorder or second IDs.
+eight-tool RecordingAdapter: no proxy port, duplicate recorder or second IDs.
 `[simulation]` requires operator seed/scenario, and optionally accepts strict
 control_enabled (default true) and compliance_voltage_v (default1.0 V, synthetic
 test setting only). No hidden scenario/seed is returned by MCP. Hardware backend is the
@@ -277,3 +277,10 @@ projection arrays. Consume consecutive pages; reset replaces the browser cache.
 The observer API uses the same cursor fields and 200-row pages, sending fixed
 parameters once, with a bounded association scan before rows are exposed.
 Raw JSONL/CSV and model-facing MCP results are unchanged.
+
+The eighth tool, `reload_dispenser_current_limit`, has a closed empty input
+object, requires no action_context, and records an ordinary intent/result without
+a decision. It reads only operator `max_load_current_A`, does not actuate or
+advance simulation time, and returns previous_max_load_current_A,
+applied_max_load_current_A, effective_max_load_current_A, hardware_changed=false,
+fresh_state_inspection_recommended, and notice. No observation ID is created.

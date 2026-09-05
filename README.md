@@ -120,7 +120,7 @@ uv run dispenser-conditioning-mcp
 The simulator runs **inside** this process, not at another externally exposed port.
 The clone contains its canonical runtime at `src/dispenser_simulator/`; the parent
 project is not needed. One RecordingAdapter creates one run under `runs/`, with
-the same seven public tools, session IDs, records, protected human dashboard and
+the same eight public tools, session IDs, records, protected human dashboard and
 internal observer file. Seed/scenario stay operator-only and out of MCP results.
 The example is a disclosed connectivity fixture, not a hidden scientific test.
 Before a blind run, choose private operator configuration and keep source/files,
@@ -398,7 +398,7 @@ conditioning or activation evidence.
 ## Integration and later safety layers
 
 Register `http://<server-IP>:8000/mcp` as a Streamable HTTP endpoint in the MCP
-host. Keep the process running and inspect the seven-tool catalog before live reads.
+host. Keep the process running and inspect the eight-tool catalog before live reads.
 Use `control_enabled = false` during first catalog/read-only integration.
 
 Before unattended autonomous conditioning, separate higher-level work must add
@@ -508,3 +508,31 @@ inspector shows dashboard record fields, not the original MCP envelope.
 A dashboard deadline/network error keeps displayed data and retries. It does not
 mean that MCP controls, recording, or the equipment stopped. Paging bounds record
 count, not individual string bytes; the browser still retains all loaded points.
+
+### Operator current cap and explicit reload
+
+Top-level `max_load_current_A = 4.8` (capital A) sets the combined **commanded**
+load-current ceiling for hardware and HTTP simulation. Valid values are finite
+numbers greater than zero and no greater than 4.8 A; omission defaults to 4.8 at
+startup. It is not a measured parallel-current value. The fixed absolute 4.8 A /
+native 2.4 A policy and exact 0.2 A upward step remain unchanged.
+
+After the operator edits this key, the agent may call
+`reload_dispenser_current_limit()` with **no arguments**. The server reads only
+this field from its canonical settings/mcp-settings.toml. No value, path,
+decision context, device access, actuation or simulated-time advancement is
+required. Missing/invalid/unreadable values leave the old cap unchanged. No other
+settings (backend, credentials, control authorization, compliance) are reloaded.
+
+The result gives previous/applied/effective caps, explicitly reports hardware
+unchanged, and recommends fresh state inspection after lowering. An already
+energized output is neither clamped nor turned off; it may remain above the new
+cap. Subsequent targets must be <=cap, including decreases; shutdown remains
+available. Enable still requires prepared zero current. Raising within 4.8 A is
+allowed only through the operator file. 5.0 A is not allowed.
+
+Initialize instructions advertise the initial cap. State/reload results report
+the applied cap; cached input schemas retain the absolute 4.8 A ceiling so a later
+valid increase is not rejected by a stale discovery limit. All calls are recorded
+through the ordinary session logger. The standalone injected simulator without
+an operator settings layout advertises reload but reports it unavailable.
