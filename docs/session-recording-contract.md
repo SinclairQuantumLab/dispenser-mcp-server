@@ -229,7 +229,7 @@ serve `/mcp` and the dashboard. The direct backend delegates once to the existin
 seven-tool RecordingAdapter: no proxy port, duplicate recorder or second IDs.
 `[simulation]` requires operator seed/scenario, and optionally accepts strict
 control_enabled (default true) and compliance_voltage_v (default1.0 V, synthetic
-test setting only). No hidden scenario/seed is returned by MCP. Real backend is the
+test setting only). No hidden scenario/seed is returned by MCP. Hardware backend is the
 default and retains its required identity/configuration/credential behavior.
 The model's original dynamics/clock and standalone stdio defaults are unchanged.
 

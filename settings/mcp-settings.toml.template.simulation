@@ -1,6 +1,6 @@
 # Copy to mcp-settings.toml for an internal simulation; no live instrument settings/auth are needed.
 # This is a disclosed connectivity example, not a hidden scientific evaluation scenario.
-# Backend is "simulation" here; "real" selects actual instruments (default if omitted). No fallback.
+# Backend is "simulation" here; "hardware" selects actual instruments (default if omitted). No fallback.
 backend = "simulation"
 # Strict true/false, default false: loopback only; true listens on all IPv4 interfaces for remote clients.
 allow_remote_access = false

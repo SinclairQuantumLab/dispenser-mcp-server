@@ -289,3 +289,25 @@ def test_removed_transport_options_are_rejected(tmp_path: Path, setting: str) ->
     layout = _write_layout(tmp_path, main_extra=setting + "\n")
     with pytest.raises(ConfigurationError, match="unknown setting"):
         OperatorConfiguration.from_toml(layout)
+
+
+@pytest.mark.parametrize("backend", [None, "hardware", "real"])
+def test_hardware_backend_selector_has_no_legacy_alias(
+    tmp_path: Path, backend: str | None
+):
+    from dispenser_conditioning_mcp.backend import create_startup_server
+    from dispenser_conditioning_mcp.config import McpStartupConfiguration
+
+    layout = _write_layout(
+        tmp_path, main_extra=f'backend = "{backend}"\n' if backend else ""
+    )
+    if backend == "real":
+        with pytest.raises(ConfigurationError, match="backend = hardware"):
+            McpStartupConfiguration.from_toml(layout)
+        with pytest.raises(ConfigurationError, match="hardware or simulation"):
+            create_startup_server(layout)
+    else:
+        assert (
+            McpStartupConfiguration.from_toml(layout).acceptance_context
+            == "production_dispenser"
+        )

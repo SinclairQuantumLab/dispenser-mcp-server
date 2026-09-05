@@ -1,17 +1,17 @@
 # Copy to mcp-settings.toml; replace placeholders before starting with uv run dispenser-conditioning-mcp.
-# Operator startup settings only; tools cannot change these. For simulation use simulation-example.toml.template.
-# Backend: "real" (default) uses instruments; "simulation" uses the internal model. No automatic fallback.
-backend = "real"
-# Required for real: "production_dispenser" for approved dispenser wiring,
+# Operator startup settings only; tools cannot change these. For simulation use mcp-settings.toml.template.simulation.
+# Backend: "hardware" (default) uses instruments; "simulation" uses the internal model. No automatic fallback.
+backend = "hardware"
+# Required for hardware: "production_dispenser" for approved dispenser wiring,
 # or "no_load_test" for a physically verified unloaded supply and process-local current stop.
 acceptance_context = "<ACCEPTANCE_CONTEXT>"
-# Required real PSU identity: exact verified serial, nonempty string, at most 128 characters.
+# Required PSU identity: exact verified serial, nonempty string, at most 128 characters.
 # Change only when deliberately binding a different supply.
 expected_serial_number = "<SERIAL_NUMBER>"
-# Required real fixed compliance voltage: numeric volts, 0 through 32, resolution 0.001 V.
+# Required hardware fixed compliance voltage: numeric volts, 0 through 32, resolution 0.001 V.
 # Replace the quoted placeholder with an operator-approved number WITHOUT quotes; never infer a safe live voltage.
 compliance_voltage_v = "<COMPLIANCE_VOLTAGE_V>"
-# Real power mutations: strict true/false, default false. Enable only for an approved controlled session.
+# Hardware power mutations: strict true/false, default false. Enable only for an approved controlled session.
 # Read tools remain available when false; all physical safety checks still apply when true.
 control_enabled = false
 # Both backends: strict true/false, default false binds 127.0.0.1; true binds 0.0.0.0.

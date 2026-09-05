@@ -13,7 +13,7 @@ git clone --recurse-submodules https://github.com/SinclairQuantumLab/dispenser-m
 cd dispenser-mcp-server
 uv sync
 # Fresh checkout only: do not overwrite existing operator files.
-cp settings/mcp-settings.toml.template settings/mcp-settings.toml
+cp settings/mcp-settings.toml.template.hardware settings/mcp-settings.toml
 cp settings/hicube-neo-client-settings.toml.template settings/hicube-neo-client-settings.toml
 cp settings/py-siglent-spd3000/gateway-settings.toml.template settings/py-siglent-spd3000/gateway-settings.toml
 cp settings/py-siglent-spd3000/gateway-auth.toml.template \

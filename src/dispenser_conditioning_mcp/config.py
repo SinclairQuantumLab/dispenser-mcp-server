@@ -115,8 +115,8 @@ class McpStartupConfiguration:
             },
             "MCP settings",
         )
-        if document.get("backend", "real") != "real":
-            raise ConfigurationError("Hardware configuration requires backend = real")
+        if document.get("backend", "hardware") != "hardware":
+            raise ConfigurationError("Hardware configuration requires backend = hardware")
         acceptance_context = cast(
             PowerAcceptanceContext,
             _choice(

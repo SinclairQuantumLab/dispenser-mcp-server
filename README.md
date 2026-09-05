@@ -17,7 +17,7 @@ See the exact [pressure contract](docs/pressure-observation-contract.md),
 ## Quick start
 
 One HTTP process serves either real instruments or an internal Python simulator.
-The operator selects `backend = "real"` (default) or `"simulation"` in the main
+The operator selects `backend = "hardware"` (default) or `"simulation"` in the main
 TOML. There is no fallback between them and no model-facing backend switch.
 
 This Python repository runs on any supported host with Git, `uv`, and Python
@@ -35,11 +35,11 @@ The recursive clone checks out the pinned `py-siglent-spd3000` source, and
 declared in `pyproject.toml`. If `uv` is missing, follow its
 [official installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
 
-For the real backend, first copy the tracked templates to local runtime files
+For the hardware backend, first copy the tracked templates to local runtime files
 **only when those files do not already exist**, then edit the copies:
 
 ```sh
-cp settings/mcp-settings.toml.template settings/mcp-settings.toml
+cp settings/mcp-settings.toml.template.hardware settings/mcp-settings.toml
 cp settings/hicube-neo-client-settings.toml.template settings/hicube-neo-client-settings.toml
 cp settings/py-siglent-spd3000/gateway-settings.toml.template settings/py-siglent-spd3000/gateway-settings.toml
 ```
@@ -53,7 +53,7 @@ settings/hicube-neo-client-settings.toml
 settings/py-siglent-spd3000/gateway-settings.toml
 ```
 
-The following configuration and deployment check are for **backend = "real"**.
+The following configuration and deployment check are for **backend = "hardware"**.
 For a hardware-free host, use the simulation instructions below instead; no live
 settings or populated gateway-auth file is needed.
 
@@ -103,11 +103,11 @@ are ignored and will no longer be replaced by tracked defaults.
 ## Independent simulation host
 
 After the same recursive clone and ordinary `uv sync`, replace only
-`settings/mcp-settings.toml` with a copy of `settings/simulation-example.toml.template` (preserve any
+`settings/mcp-settings.toml` with a copy of `settings/mcp-settings.toml.template.simulation` (preserve any
 existing operator profile first). For a fresh simulation host:
 
 ```sh
-cp settings/simulation-example.toml.template settings/mcp-settings.toml
+cp settings/mcp-settings.toml.template.simulation settings/mcp-settings.toml
 ```
 
 Set `allow_remote_access = true` if the decision
@@ -134,7 +134,7 @@ virtual increments; requests alone advance model time. No physics is changed.
 The old developer stdio command retains its original 10.0 V default and explicit
 environment overrides. HTTP simulation does not import hardware adapters or read
 their settings/authentication. Installed dependency code is not device access.
-The legacy deployment-check command is for the real backend, not required here.
+The legacy deployment-check command is for the hardware backend, not required here.
 
 ## Tool surface
 

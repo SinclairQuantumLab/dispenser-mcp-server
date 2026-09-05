@@ -166,13 +166,13 @@
   records or URLs. Disable proxy_headers on owned HTTP entrypoints. This excludes
   uncredentialed remote tool-only agents, not same-host full-access agents or
   untrusted proxies whose connections appear local. Do not claim OS isolation.
-- Operator TOML selects real (default) or simulation backend before hardware
+- Operator TOML selects hardware (default) or simulation backend before hardware
   assembly. Never fall back between them or expose backend/seed/scenario in tools.
   Simulation runs directly in-process with one existing RecordingAdapter and one
   recorder; do not wrap it in the hardware recording server. Canonical simulator
   source lives in src/dispenser_simulator under its specialist's ownership. Keep
   model/clock behavior unchanged and sibling developer package a bootstrap only.
-- Track sanitized settings/*.toml.template files (including nested instrument
+- Track sanitized settings/*.toml.template* files (including nested instrument
   templates), never actual operator TOMLs. settings/.gitignore owns the recursive
   *.toml exclusion. Preserve local files when changing Git tracking; back up
   settings before pulling the one-time tracked-to-template migration.

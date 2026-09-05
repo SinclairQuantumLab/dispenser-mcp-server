@@ -20,8 +20,8 @@ def create_startup_server(
             document: dict[str, Any] = tomllib.load(stream)
     except (OSError, ValueError) as error:
         raise ConfigurationError("Cannot read MCP startup settings") from error
-    backend = document.get("backend", "real")
-    if backend == "real":
+    backend = document.get("backend", "hardware")
+    if backend == "hardware":
         from dispenser_conditioning_mcp.app import create_configured_server
         from dispenser_conditioning_mcp.config import OperatorConfiguration
 
@@ -30,7 +30,7 @@ def create_startup_server(
             operator
         ), McpTransportConfiguration.from_settings(operator.startup)
     if backend != "simulation":
-        raise ConfigurationError("backend must be real or simulation")
+        raise ConfigurationError("backend must be hardware or simulation")
     allowed = {
         "backend",
         "allow_remote_access",

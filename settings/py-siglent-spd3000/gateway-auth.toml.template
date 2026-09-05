@@ -1,4 +1,4 @@
-# Real backend only; copy to gateway-auth.toml. Simulation does not read this file.
+# Hardware backend only; copy to gateway-auth.toml. Simulation does not read this file.
 # Required nonempty shared authentication token, no default: copy the exact token configured on the gateway.
 # Upstream py-siglent-spd3000 owns this format; do not add other keys.
 # Keep the populated file untracked and do not show its contents to an agent or in logs.

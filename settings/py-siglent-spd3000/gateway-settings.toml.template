@@ -1,4 +1,4 @@
-# Real backend only; copy to gateway-settings.toml. Simulation does not read this file.
+# Hardware backend only; copy to gateway-settings.toml. Simulation does not read this file.
 # Required authenticated gateway identifier: nonempty string, at most 512 characters.
 # Set to the gateway host/IP accepted by py-siglent-spd3000, NOT a direct PSU connection.
 identifier = "<IDENTIFIER>"
