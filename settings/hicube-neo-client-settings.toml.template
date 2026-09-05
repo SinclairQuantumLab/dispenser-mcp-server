@@ -1,4 +1,5 @@
 # HiCube Neo OPC UA settings. The client implementation is vendored in this repo.
-host = "replace-with-hicube-host"
+# Replace `<HOST>` placeholder with the IP address or hostname of a HiCube NEO turbo pump
+host = "<HOST>"
 port = 4840
 timeout_s = 5.0
