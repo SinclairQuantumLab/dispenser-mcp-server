@@ -34,10 +34,19 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
                 path,
                 headers={"X-Forwarded-For": "127.0.0.1", "Forwarded": "for=127.0.0.1"},
             )
-            assert response.status_code == 401
+            assert response.status_code == (
+                401 if path == "/api/simulation-state" else 200
+            )
             assert access.token not in response.text
         anonymous_page = await client.get("/dashboard")
-        assert anonymous_page.status_code == 303
+        assert anonymous_page.status_code == 200
+        assert 'data-operator-authorized="false"' in anonymous_page.text
+        assert 'id="dashboard-access-phrase"' not in anonymous_page.text
+        assert (
+            await client.post(
+                "/api/runs/rename", json={"run": "", "display_name": "denied"}
+            )
+        ).status_code == 401
         assert access.token not in anonymous_page.text
         assert (await client.get("/dashboard/operator")).status_code == 403
         assert access.token not in (await client.get("/dashboard/login")).text
@@ -45,9 +54,14 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
             await client.post("/dashboard/login", data={"code": "wrong"})
         ).status_code == 401
         logged_in = await client.post(
-            "/dashboard/login", data={"code": "  " + access.token.upper() + "  "}
+            "/dashboard/login?run=saved-fixture&archived=true",
+            data={"code": "  " + access.token.upper() + "  "},
         )
         assert logged_in.status_code == 303
+        assert (
+            logged_in.headers["location"]
+            == "/dashboard?run=saved-fixture&archived=true"
+        )
         assert "HttpOnly" in logged_in.headers["set-cookie"]
         assert "SameSite=strict" in logged_in.headers["set-cookie"]
         assert access.token not in logged_in.headers["set-cookie"]
@@ -71,8 +85,10 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
         base_url="http://localhost",
         cookies=cookies,
     ) as client:
-        assert (await client.get("/api/session")).status_code == 401
-        assert (await client.get("/dashboard")).status_code == 303
+        assert (await client.get("/api/session")).status_code == 200
+        assert (await client.get("/api/simulation-state")).status_code == 401
+        assert (await client.get("/dashboard")).status_code == 200
+        assert access.token not in (await client.get("/dashboard")).text
         assert (
             await client.post("/dashboard/login", data={"code": access.token})
         ).status_code == 401
@@ -96,7 +112,8 @@ async def test_dashboard_login_does_not_gate_remote_mcp(tmp_path: Path):
             base_url="http://test-server",
         ) as client,
     ):
-        assert (await client.get("/api/session")).status_code == 401
+        assert (await client.get("/api/session")).status_code == 200
+        assert (await client.get("/api/simulation-state")).status_code == 401
         result = await client.post(
             "/mcp",
             headers={"Accept": "application/json, text/event-stream"},

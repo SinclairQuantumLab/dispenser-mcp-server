@@ -134,6 +134,12 @@ function watchTimeView(id) {
 }
 function showViewError(error) { el("status").textContent="Chart update failed: "+error.message; }
 const el = id => document.getElementById(id);
+let operatorAuthorized = document.body.dataset.operatorAuthorized === "true";
+for(const link of document.querySelectorAll(".operator-unlock")) {
+  const target=new URL("/dashboard/login",location.origin);
+  for(const key of ["run","archived"]) {const value=new URLSearchParams(location.search).get(key);if(value!==null)target.searchParams.set(key,value);}
+  link.href=target.href;
+}
 const selectedRun = new URLSearchParams(window.location.search).get("run") || "";
 const runQuery = "run=" + encodeURIComponent(selectedRun);
 let cursor = 0, generation = -1, metadata = {};
@@ -395,6 +401,7 @@ async function poll() {
     const changed = data.reset || (data.events?.length || 0) > 0;
     if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); resultsByCall.clear(); recordNumbers.clear(); selectedId = null; resetTimeView("chart");resetTimeView("truth-chart");truthCursor=0;truthGeneration=-1;truthRows=[];truthData=null;truthMore=false;truthRevision=null; }
     metadata = data.metadata || metadata;
+    operatorAuthorized = data.operator_authorized === true;
     runManagement = data.run_management || {};
     updateManagement();
     if (metadata.session_id && clockInitializedFor !== metadata.session_id) {
@@ -431,9 +438,12 @@ async function poll() {
 async function pollTruth(force=false) {
   const section=el("inside");section.hidden=metadata.session_kind!=="simulated";
   if (section.hidden) {truthMore=false;return;}
+  el("truth-content").hidden=!operatorAuthorized;el("truth-locked").hidden=operatorAuthorized;
+  if(!operatorAuthorized) {truthMore=false;truthRows=[];truthData=null;truthCursor=0;truthGeneration=-1;truthRevision=null;Plotly.purge("truth-chart");return;}
   if (force) {if(truthData) await drawTruth(truthData,true);return;}
   try {
     const response=await fetch(`/api/simulation-state?after=${truthCursor}&generation=${truthGeneration}&${runQuery}`,{cache:"no-store",signal:AbortSignal.timeout(5000)});
+    if(response.status===401||response.status===403) {operatorAuthorized=false;truthMore=false;el("truth-content").hidden=true;el("truth-locked").hidden=false;return;}
     if(!response.ok) throw new Error("HTTP "+response.status);
     const data=await response.json();
     if(data.reset) {truthRows=[];truthRevision=null;}
@@ -525,11 +535,13 @@ let runManagement = {};
 const collection = el("run-collection");
 collection.value = new URLSearchParams(location.search).get("archived") === "true" ? "archived" : "active";
 function updateManagement() {
-  el("archive-run").disabled = !runManagement.name || !!runManagement.current;
+  el("rename-run").disabled = !operatorAuthorized;
+  el("restore-run").disabled = !operatorAuthorized;
+  el("archive-run").disabled = !operatorAuthorized || !runManagement.name || !!runManagement.current;
   el("archive-run").hidden = !!runManagement.archived;
   el("restore-run").hidden = !runManagement.archived;
   el("delete-run").hidden = !runManagement.archived;
-  el("delete-run").disabled = !!runManagement.current;
+  el("delete-run").disabled = !operatorAuthorized || !!runManagement.current;
 }
 async function manageRun(operation) {
   const body = {run:selectedRun};

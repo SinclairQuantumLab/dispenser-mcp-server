@@ -152,14 +152,26 @@ def dashboard_routes(
             "name": tail.directory.name,
             "current": not replay and tail.directory == directory,
         }
+        snapshot["operator_authorized"] = access.authorized(request)
         snapshot["recording_view"] = "saved_recording" if saved else "process_session"
         return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
     async def page(request: Request) -> Response:
-        # The route guard runs before rendering; never expose this in static assets.
+        # Ordinary plots are public; only authorized viewers receive the phrase.
         html = (assets / "session.html").read_text(encoding="utf-8")
+        authorized = access.authorized(request)
+        panel = (
+            '<section class="banner" aria-label="Dashboard access phrase"><strong>Dashboard access phrase</strong>'
+            '<div id="dashboard-access-phrase" style="font-size:26px;letter-spacing:1px;margin:8px 0;user-select:all">'
+            + escape(access.token)
+            + "</div><small>Valid until server restart. Share only with authorized viewers.</small></section>"
+            if authorized
+            else '<p class="banner">Public observations and recorded decisions. <a class="operator-unlock" href="/dashboard/login">Unlock internal state and run management</a></p>'
+        )
         return HTMLResponse(
-            html.replace("<!-- DASHBOARD_ACCESS_PHRASE -->", escape(access.token)),
+            html.replace("<!-- DASHBOARD_OPERATOR_ACCESS -->", panel).replace(
+                "<!-- OPERATOR_AUTHORIZED -->", "true" if authorized else "false"
+            ),
             headers={"Cache-Control": "no-store"},
         )
 
@@ -190,7 +202,13 @@ def dashboard_routes(
         Route("/api/simulation-state", simulation_state),
     ]
     protected: list[BaseRoute] = [
-        Route(route.path, access.protect(route.endpoint), methods=route.methods)
+        Route(
+            route.path,
+            access.protect(route.endpoint)
+            if route.path in {"/api/simulation-state", "/api/runs/{operation}"}
+            else route.endpoint,
+            methods=route.methods,
+        )
         for route in routes
     ]
     return protected + access.routes()

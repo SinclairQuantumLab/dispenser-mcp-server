@@ -11,7 +11,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from html import escape
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 from coolname import generate_slug, replace_random
 from starlette.requests import Request
@@ -67,6 +67,14 @@ class DashboardAccess:
         return guarded
 
     async def login(self, request: Request) -> Response:
+        selection = urlencode(
+            {
+                key: request.query_params[key]
+                for key in ("run", "archived")
+                if key in request.query_params
+            }
+        )
+        suffix = "?" + selection if selection else ""
         if request.method == "POST":
             now = time.monotonic()
             while self.failed_logins and now - self.failed_logins[0] >= 60:
@@ -96,11 +104,11 @@ class DashboardAccess:
             if not hmac.compare_digest(supplied.encode(), self.token.encode()):
                 self.failed_logins.append(time.monotonic())
                 return HTMLResponse(
-                    self.login_page("Invalid access phrase."),
+                    self.login_page("Invalid access phrase.", suffix),
                     status_code=401,
                     headers={"Cache-Control": "no-store"},
                 )
-            response = RedirectResponse("/dashboard", status_code=303)
+            response = RedirectResponse("/dashboard" + suffix, status_code=303)
             # The API and assets share the origin at different paths. Only the
             # dashboard route guards interpret this cookie; MCP ignores it.
             response.set_cookie(
@@ -113,14 +121,18 @@ class DashboardAccess:
             )
             response.headers["Cache-Control"] = "no-store"
             return response
-        return HTMLResponse(self.login_page(""), headers={"Cache-Control": "no-store"})
+        return HTMLResponse(
+            self.login_page("", suffix), headers={"Cache-Control": "no-store"}
+        )
 
     @staticmethod
-    def login_page(message: str) -> str:
+    def login_page(message: str, suffix: str = "") -> str:
         return (
-            '<!doctype html><html lang="en"><title>Operator dashboard login</title><h1>Operator dashboard login</h1><p>Ask the operator for this server’s current dashboard access phrase. This login does not authorize MCP or hardware control.</p><p>'
+            '<!doctype html><html lang="en"><title>Operator dashboard login</title><h1>Unlock internal state and run management</h1><p>Ordinary observations and decisions are public. Ask the operator for this server’s current dashboard access phrase. This login does not authorize MCP or hardware control.</p><p>'
             + escape(message)
-            + '</p><form method="post" action="/dashboard/login"><label>Access phrase <input name="code" type="password" required autocomplete="off"></label><button>Open dashboard</button></form></html>'
+            + '</p><form method="post" action="/dashboard/login'
+            + escape(suffix, quote=True)
+            + '"><label>Access phrase <input name="code" type="password" required autocomplete="off"></label><button>Open dashboard</button></form></html>'
         )
 
     async def operator(self, request: Request) -> Response:

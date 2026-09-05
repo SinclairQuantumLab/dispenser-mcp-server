@@ -110,6 +110,9 @@
   covering current state, decisions, changes, checks, and remaining work.
 - The coordinating root reviews the engineer's results without rerunning tests.
   Do not add reviewers or subagents unless the user explicitly requests them.
+- The MCP engineer owns server/UI implementation and transport/data-retrieval
+  correctness, not scientific run-outcome interpretation. The conditioning
+  decision specialist owns experimental retrospective interpretation/reporting.
 - Use Python 3.13 and `uv`.
 - Keep device integration, domain normalization, MCP registration, and startup
   HTTP transport separate and independently testable.
@@ -167,8 +170,10 @@
   refers to the configured current directory; saved selections are immediate
   children of runs/. Never change the active recorder, start/stop acquisition,
   or expose arbitrary browser-selected paths. Saved-only preview has no live view.
-- Guard every dashboard page/data/asset route with the startup-scoped operator
-  access boundary. Leave /mcp independent. Show access phrases in the HTTP startup terminal, socket-loopback operator page,
+- Ordinary dashboard HTML/assets, run lists and recorded observations/actions/
+  decisions are public. Guard internal simulation data and management POSTs with
+  the existing operator boundary. Locked truth must not block ordinary polling.
+  Preserve selected runs across login. Leave /mcp independent. Show access phrases in the HTTP startup terminal, socket-loopback operator page,
   and dashboard for loopback or already-authenticated remote viewers; never anonymous
   remote/login pages, static assets, MCP results,
   records or URLs. Disable proxy_headers on owned HTTP entrypoints. This excludes

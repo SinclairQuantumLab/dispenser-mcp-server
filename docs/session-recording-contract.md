@@ -193,10 +193,12 @@ panel remain the same read-only views for selected compatible records.
 
 ## Operator dashboard access
 
-Dashboard pages, assets, run listing, recorded observations/decisions, and internal
-simulation state share one operator-only route guard. Remote unauthenticated API
-requests receive HTTP 401; the main page directs users to `/dashboard/login`.
-The login form itself is public but contains no records or code. `/mcp` is separate:
+Dashboard HTML/static assets, `/api/session` and `/api/runs` are public ordinary
+record views. `/api/simulation-state` and management POST routes remain protected;
+anonymous access to those routes receives HTTP 401. Public HTML contains no access
+phrase, cookie or internal-state values. The locked internal section makes no
+repeated protected requests; ordinary plots keep updating. Unlock links preserve
+run selection across login. The login form contains no records or access phrase. `/mcp` is separate:
 its protocol, public results, control checks and lack of MCP caller authentication
 are unchanged. A dashboard login is not hardware-control authorization.
 

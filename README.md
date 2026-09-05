@@ -181,9 +181,12 @@ attempts for up to 60 seconds across the process; cookies remain separate random
 secrets. The dashboard shows the current phrase near the top to loopback viewers and
 already-authenticated remote viewers, never anonymous visitors. It is valid until
 server restart and is not saved in records or static assets.
-Remote dashboard visitors must enter the operator access phrase at
-`/dashboard/login`. Each HTTP process generates a new code, shown only in its
-startup terminal and on the server-loopback `/dashboard/operator` page. Actual
+Ordinary dashboard pages, assets, run lists and observation/action/decision data
+are public without login. Internal simulation state and run-management writes
+still require the operator phrase at `/dashboard/login`. The locked internal
+section does not poll or interrupt ordinary plots; unlocking preserves the selected
+saved run. Each HTTP process generates a new code, shown only in its startup
+terminal, server-loopback `/dashboard/operator` page, or already-authorized dashboard. Actual
 loopback connections can view directly. The code is reusable until restart, not a
 single-use OTP; it is never an MCP argument or result. Keep it and the resulting
 browser cookie out of the remote decision agent’s context. This does not isolate
