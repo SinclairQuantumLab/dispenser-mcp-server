@@ -45,6 +45,24 @@ def action_context_schema() -> dict[str, Any]:
                 "items": {"type": "string", "minLength": 1, "maxLength": 128},
                 "description": "Successfully recorded observation IDs from this session.",
             },
+            "token_usage": {
+                "type": ["object", "null"],
+                "properties": {
+                    "usage_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                    "total_tokens": {"type": "integer", "minimum": 0},
+                    "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+                    "output_tokens": {"type": ["integer", "null"], "minimum": 0},
+                    "cached_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+                    "model": {
+                        "type": ["string", "null"],
+                        "minLength": 1,
+                        "maxLength": 128,
+                    },
+                },
+                "required": ["usage_id", "total_tokens"],
+                "additionalProperties": False,
+                "description": "Optional caller-reported usage; repeat usage_id for the same accounting batch. Not independently verified. Input includes cached; output includes reasoning when provided.",
+            },
             "confidence": {
                 "type": "object",
                 "properties": {

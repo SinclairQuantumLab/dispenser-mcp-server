@@ -417,3 +417,19 @@ pressure normalization       deterministic topology/current controller
                              |
               Streamable HTTP at /mcp
 ```
+### Dashboard time views and reported tokens
+
+The pressure/power and internal-model time charts each have an independent Fixed / Rolling / Full time view. Fixed preserves
+the visible range; Rolling follows new points using the current zoom/pan width;
+Full fits all plotted points. Zooming in Full switches to Fixed, while zooming
+in Rolling changes its retained width. No new data means no rolling movement.
+Changing the main time axis or run resets its view; Reset selects Full and fits Y.
+
+Callers may optionally include `action_context.token_usage` with a unique
+`usage_id` and nonnegative integer `total_tokens`. Optional input/output/cached
+counts and model identify provider-reported details; missing values are not zero.
+Input includes cached tokens and output includes reasoning when reported—do not
+add them again. Reuse the same ID when one inference supplies several MCP calls.
+The dashboard counts each ID once, keeps the first report on conflicts and warns.
+CSV preserves repeated submissions: deduplicate `token_usage_id` when analyzing
+usage offline. This is a reported subset, not measured app usage or a billing total.

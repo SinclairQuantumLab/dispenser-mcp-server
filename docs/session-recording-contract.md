@@ -248,3 +248,20 @@ Development uses one coordinated current format.
 there is no legacy migration or normalization. Historical files stay untouched,
 but readability across development format changes is not promised. Existing historical/operational files are untouched;
 the active no-load latch is process-local.
+### Optional caller token accounting
+
+`action_context.token_usage` may be absent/null. When supplied, it has required
+`usage_id` (nonempty string, max 128) and `total_tokens` (strict integer >=0).
+Optional nullable `input_tokens`, `output_tokens`, `cached_input_tokens` are
+strict integers >=0; `model` is an optional nullable nonempty string (max 128).
+No counts are estimated. Input already includes cached input; output already
+includes reasoning when the provider reports it. Reuse a usage ID for the same
+inference/accounting batch across calls. Missing reports never block a valid
+context; malformed supplied fields follow ordinary context validation.
+
+Raw events preserve the context; decisions.csv adds token_usage_id, total_tokens,
+input_tokens, output_tokens, cached_input_tokens and token_model. CSV includes
+repeated IDs; offline totals must deduplicate within each run. Dashboard totals
+use the first report for each ID and visibly flag conflicting later values,
+without changing execution. Plots use the first corresponding record number,
+not a fabricated model observation timestamp. Reported coverage is explicit.

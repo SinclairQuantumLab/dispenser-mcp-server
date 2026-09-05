@@ -17,6 +17,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictFloat,
+    StrictInt,
     ValidationError,
 )
 
@@ -59,6 +60,18 @@ class ClaimConfidence(BaseModel):
     value: Annotated[StrictFloat, Field(ge=0, le=1)] | None
 
 
+class TokenUsage(BaseModel):
+    """Optional caller-reported accounting, not independently measured or billed."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    usage_id: str = Field(min_length=1, max_length=128)
+    total_tokens: Annotated[StrictInt, Field(ge=0)]
+    input_tokens: Annotated[StrictInt, Field(ge=0)] | None = None
+    output_tokens: Annotated[StrictInt, Field(ge=0)] | None = None
+    cached_input_tokens: Annotated[StrictInt, Field(ge=0)] | None = None
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class ActionContext(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     session_id: str = Field(min_length=1, max_length=128)
@@ -70,6 +83,7 @@ class ActionContext(BaseModel):
         max_length=100
     )
     confidence: ClaimConfidence
+    token_usage: TokenUsage | None = None
 
 
 class CompletionAssessment(BaseModel):

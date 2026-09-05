@@ -23,23 +23,84 @@ function elapsedAxis(values, range) {
   return {tickmode:"array", tickvals, ticktext:tickvals.map(v => elapsedLabel(v, hours, showSeconds, fractional)),
     title:{text:"Virtual elapsed · " + (hours ? (showSeconds ? (fractional ? "HH:MM:SS.sss" : "HH:MM:SS") : "HH:MM") + " (hours may exceed 24)" : (fractional ? "MM:SS.sss" : "MM:SS"))}};
 }
-function watchElapsedZoom(id, values, count) {
-  const graph = el(id);
+const timeViews = {
+  chart: {mode:"full", range:null, width:null, busy:0, queue:Promise.resolve(), wall:false},
+  "truth-chart": {mode:"full", range:null, width:null, busy:0, queue:Promise.resolve(), wall:false}
+};
+function timeNumber(value, wall) {
+  if (typeof value === "number") return value;
+  if (!wall) return Number(value);
+  const text = String(value).replace(" ", "T");
+  return Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(text) ? text : text+"Z");
+}
+function timeRange(state, values) {
+  const points = values.map(v=>timeNumber(v,state.wall)).filter(Number.isFinite);
+  const latest = points.length ? points.reduce((a,b)=>Math.max(a,b)) : (state.range?.[1] ?? 0);
+  const earliest = points.length ? points.reduce((a,b)=>Math.min(a,b)) : latest;
+  const fallback = state.wall ? 60000 : 1;
+  if (state.mode === "full") state.range = latest > earliest ? [earliest,latest] : [latest-fallback/2,latest+fallback/2];
+  else if (state.mode === "rolling") {
+    state.width = state.width > 0 ? state.width : fallback;
+    state.range = [latest-state.width,latest];
+  } else if (!state.range) state.range = [latest-fallback/2,latest+fallback/2];
+  return state.range;
+}
+function viewIds(id) {
+  return id === "chart" ? ["time-view","time-width",4] : ["truth-time-view","truth-time-width",3];
+}
+function updateWidth(id) {
+  const state=timeViews[id], [,widthId]=viewIds(id);
+  const width=state.range ? state.range[1]-state.range[0] : (state.width || (state.wall?60000:1));
+  el(widthId).textContent="Visible width: "+(width/(state.wall?1000:1/60)).toFixed(3)+" s";
+}
+function captureRange(id) {
+  const state=timeViews[id], raw=el(id).layout?.xaxis?.range;
+  if (raw?.length === 2) {
+    const range=raw.map(v=>timeNumber(v,state.wall));
+    if (range.every(Number.isFinite) && range[1]>range[0]) {state.range=range;state.width=range[1]-range[0];}
+  }
+}
+function resetTimeView(id) {
+  const state=timeViews[id];
+  state.mode="full";state.range=null;state.width=null;
+  el(viewIds(id)[0]).value="full";
+}
+function guardedPlot(id, operation) {
+  const state=timeViews[id];
+  const next=state.queue.then(async()=>{state.busy++;try{return await operation();}finally{state.busy--;}});
+  state.queue=next.catch(()=>{});
+  return next;
+}
+function viewLayout(id, layout, values) {
+  const state=timeViews[id], range=timeRange(state,values), count=viewIds(id)[2];
+  const rendered=state.wall ? range.map(v=>new Date(v).toISOString()) : range;
+  const ticks=state.wall ? {} : elapsedAxis(values,range);
+  for(let i=1;i<=count;i++) {
+    const key=i===1?"xaxis":"xaxis"+i;
+    Object.assign(layout[key],ticks,{range:rendered,autorange:false});
+    if(i<count) layout[key].title=null;
+  }
+  updateWidth(id);
+}
+function watchTimeView(id, values) {
+  const graph=el(id), state=timeViews[id], [selectId,,count]=viewIds(id);
   graph.removeAllListeners("plotly_relayout");
-  graph.on("plotly_relayout", change => {
-    if (!Object.keys(change).some(k => /^xaxis[0-9]*\.(range|autorange)/.test(k))) return;
-    if (id === "chart" && !rendering && Object.keys(change).some(k=>k.includes("range["))) el("follow").checked = false;
-    if (id === "chart" && el("clock").value !== "virtual") return;
-    const ticks = elapsedAxis(values, graph.layout.xaxis.autorange ? null : graph.layout.xaxis.range);
-    const update = {};
-    for (let i=1;i<=count;i++) {
-      const axis = i === 1 ? "xaxis" : "xaxis"+i;
-      update[axis+".tickmode"] = ticks.tickmode; update[axis+".tickvals"] = ticks.tickvals; update[axis+".ticktext"] = ticks.ticktext;
-      if (i === count) update[axis+".title"] = ticks.title;
+  graph.on("plotly_relayout", change=>{
+    if(state.busy || !Object.keys(change).some(k=>/^xaxis[0-9]*\.(range|autorange)/.test(k))) return;
+    captureRange(id);
+    if(state.mode==="full") {state.mode="fixed";el(selectId).value="fixed";}
+    updateWidth(id);
+    if(state.wall) return;
+    const ticks=elapsedAxis(values,state.range), update={};
+    for(let i=1;i<=count;i++) {
+      const axis=i===1?"xaxis":"xaxis"+i;
+      for(const key of ["tickmode","tickvals","ticktext"]) update[axis+"."+key]=ticks[key];
+      if(i===count) update[axis+".title"]=ticks.title;
     }
-    Plotly.relayout(graph, update);
+    guardedPlot(id,()=>Plotly.relayout(graph,update)).catch(showViewError);
   });
 }
+function showViewError(error) { el("status").textContent="Chart update failed: "+error.message; }
 const el = id => document.getElementById(id);
 const selectedRun = new URLSearchParams(window.location.search).get("run") || "";
 const runQuery = "run=" + encodeURIComponent(selectedRun);
@@ -102,6 +163,7 @@ function selectEvent(id, jump = false) {
   const statedReason = ctx?.rationale_summary;
   const supportingIds = ctx?.observation_ids ?? [];
   const args = event.payload?.arguments || {};
+  readable.append(text("p", usageText(ctx?.token_usage || event.payload?.arguments?.action_context?.token_usage), "muted"));
   if (chosenAction) readable.append(text("p", actor() + " chose: " + chosenAction));
   if (statedReason) readable.append(text("p", "Stated reason: " + statedReason));
   if (num(args.target_current_a) !== null) readable.append(text("p", "Requested load-current target: " + fmt(args.target_current_a) + " A"));
@@ -127,8 +189,10 @@ output_enabled: "Output: " + (value ? "ON" : "OFF")
     const at = xFor(event);
     if (at !== null) {
       const range = el("clock").value === "virtual" ? [Math.max(0, at - 1), at + 1] : [new Date(Date.parse(at) - 30000).toISOString(), new Date(Date.parse(at) + 30000).toISOString()];
-      el("follow").checked = false;
-      Plotly.relayout("chart", { "xaxis.range": range, "xaxis.autorange": false });
+      timeViews.chart.mode="fixed";el("time-view").value="fixed";
+      timeViews.chart.range=range.map(v=>timeNumber(v,timeViews.chart.wall));
+      timeViews.chart.width=timeViews.chart.range[1]-timeViews.chart.range[0];
+      draw().catch(showViewError);
     }
   }
   el("selected").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -136,6 +200,52 @@ output_enabled: "Output: " + (value ? "ON" : "OFF")
 
 function eventButton(id, label, jump = true) {
   const button = text("button", label); button.addEventListener("click", () => selectEvent(id, jump)); return button;
+}
+
+function reportedUsage(rows) {
+  const seen=new Map(), reports=[], conflicts=[];
+  let missing=0,duplicates=0,total=0;
+  for(const row of rows) {
+    if(!row.token_usage_id || !Number.isInteger(row.total_tokens) || row.total_tokens<0) {missing++;continue;}
+    const first=seen.get(row.token_usage_id);
+    if(first) {
+      duplicates++;
+      if(["total_tokens","input_tokens","output_tokens","cached_input_tokens","token_model"].some(k=>first[k]!=null && row[k]!=null && first[k]!==row[k]))
+        conflicts.push(row);
+      continue;
+    }
+    seen.set(row.token_usage_id,row);total+=row.total_tokens;
+    reports.push({...row,cumulative_tokens:total});
+  }
+  return {reports,conflicts,missing,duplicates,total};
+}
+function usageText(usage) {
+  if(!usage) return "Token usage: not reported";
+  return "Caller-reported tokens: "+usage.total_tokens+
+    " total · input "+(usage.input_tokens??"not reported")+
+    " · output "+(usage.output_tokens??"not reported")+
+    " · cached input "+(usage.cached_input_tokens??"not reported")+
+    (usage.model?" · "+usage.model:"")+" · usage ID "+usage.usage_id;
+}
+async function drawTokens() {
+  const summary=reportedUsage(decisions), rows=summary.reports;
+  el("token-chart").hidden=!rows.length;
+  el("token-coverage").textContent=!rows.length ? "Token usage not reported. Cumulative usage unavailable; missing reports are not zero." : rows.length+" unique usage reports across "+decisions.length+" decision records; "+summary.missing+" without usage; "+summary.duplicates+" repeated IDs. Reported cumulative subset: "+summary.total+" tokens.";
+  el("token-warning").textContent=summary.conflicts.length ? "Conflicting repeated usage IDs: "+summary.conflicts.map(r=>r.token_usage_id+" ("+shortId(r.event_id)+")").join(", ")+". First values retained." : "";
+  if(!rows.length) {Plotly.purge("token-chart");return;}
+  const trace=(field,name,panel)=>({type:"scatter",mode:"lines+markers",name,
+    x:rows.map(r=>recordNumbers.get(r.event_id)),y:rows.map(r=>r[field]),
+    xaxis:panel===1?"x":"x2",yaxis:panel===1?"y":"y2",
+    customdata:rows.map(r=>r.event_id),text:rows.map(r=>shortId(r.event_id)+" · "+r.token_usage_id),
+    hovertemplate:"%{text}<br>%{y} reported tokens<extra>"+name+"</extra>"});
+  await Plotly.react("token-chart",[trace("total_tokens","Tokens per reported decision",1),trace("cumulative_tokens","Cumulative reported tokens",2)],{
+    paper_bgcolor:"#152330",plot_bgcolor:"#152330",font:{color:"#c9d8e5"},height:440,
+    margin:{l:90,r:25,t:35,b:50},uirevision:metadata.session_id,
+    xaxis:{anchor:"y",showticklabels:false},xaxis2:{anchor:"y2",matches:"x",title:{text:"Record number · first occurrence of each usage ID"}},
+    yaxis:{domain:[.58,1],title:{text:"Tokens / report"}},yaxis2:{domain:[0,.42],title:{text:"Cumulative tokens"}}
+  },{responsive:true,displaylogo:false});
+  el("token-chart").removeAllListeners("plotly_click");
+  el("token-chart").on("plotly_click",event=>{const id=event.points[0]?.customdata;if(id)selectEvent(id);});
 }
 
 function updatePanels() {
@@ -149,6 +259,7 @@ function updatePanels() {
   for (const row of [...decisions].reverse()) {
     const card = text("article", "", "card"); card.dataset.record = row.event_id;
     card.append(text("small", `${shortId(row.event_id)} · ${actor()} decision: ${row.decision_at || "not supplied"} · MCP receipt: ${row.received_at || row.recorded_at}`), text("h3", row.chosen_action), text("p", row.rationale_summary));
+    card.append(text("p", usageText(row.token_usage_id ? {usage_id:row.token_usage_id,total_tokens:row.total_tokens,input_tokens:row.input_tokens,output_tokens:row.output_tokens,cached_input_tokens:row.cached_input_tokens,model:row.token_model}:null), "muted"));
     if (row.background) card.append(text("p", row.background, "muted"));
     if (row.confidence_claim) card.append(text("p", `Self-reported confidence: ${row.confidence_value ?? "unknown"} · Claim: ${row.confidence_claim}`, "muted"));
     if (row.completion_outcome) card.append(text("p", `${actor()} assessment: ${row.completion_outcome} · Dispenser response: ${row.dispenser_response}. This assessment does not confirm output OFF or successful activation.`, "banner"));
@@ -204,13 +315,14 @@ async function draw() {
     yaxis2: { domain: [0.49, 0.71], title: { text: "Current · A" }, gridcolor: "#304254", rangemode: "tozero", automargin: true },
     yaxis3: { domain: [0.23, 0.44], title: { text: "Voltage · V" }, gridcolor: "#304254", rangemode: "tozero", automargin: true },
     yaxis4: { domain: [0, 0.17], title: { text: "Power requests<br>and results" }, tickvals: [0, 1, 2, 3], ticktext: ["Error / uncertain", "Not executed", "Completed", "Requested"], range: [-0.5, 3.5], gridcolor: "#304254", automargin: true } };
-  if (el("follow").checked) for (const key of ["xaxis", "xaxis2", "xaxis3", "xaxis4"]) layout[key].autorange = true;
+  timeViews.chart.wall=axis==="wall";
+  viewLayout("chart",layout,elapsedValues.filter(v=>v!==null));
   rendering = true;
-  await Plotly.react("chart", traces, layout, { responsive: true, displaylogo: false, scrollZoom: true });
+  await guardedPlot("chart",()=>Plotly.react("chart", traces, layout, { responsive: true, displaylogo: false, scrollZoom: true }));
   if (!chartReady) {
     el("chart").on("plotly_click", data => { const id = data.points[0]?.customdata; if (id) selectEvent(id); });
   }
-  watchElapsedZoom("chart", elapsedValues, 4);
+  watchTimeView("chart", elapsedValues);
   chartReady = true; rendering = false;
 }
 
@@ -225,6 +337,7 @@ async function poll() {
     metadata = data.metadata || metadata;
     if (metadata.session_id && clockInitializedFor !== metadata.session_id) {
       el("clock").value = metadata.session_kind === "simulated" && metadata.observed_time_origin ? "virtual" : "wall";
+      resetTimeView("chart");resetTimeView("truth-chart");
       clockInitializedFor = metadata.session_id;
     }
     generation = data.generation ?? generation; cursor = data.cursor ?? cursor;
@@ -245,12 +358,12 @@ async function poll() {
     el("observation-age").textContent = lastObservation ? `Last source observation: ${lastObservation.observed_at || "unavailable"} · Received/recorded ${Math.floor(observedAgo)} s ago. New observations appear only when a caller invokes a reading or action; this page does not measure.` : "No observation yet. This dashboard does not sample instruments.";
     el("status").textContent = `${events.length} records · ${observations.length} readings · ${controls.filter(c => c.phase === "call_intent").length} power requests · ${decisions.length} decisions${data.message ? "\n" + data.message : ""}${data.errors ? `\n${data.errors} unreadable record(s): ${data.last_error}` : ""}`;
     el("status").className = data.status === "error" || data.errors ? "error" : "";
-    if (changed) { updatePanels(); await draw(); }
+    if (changed) { updatePanels(); await draw(); await drawTokens(); }
     await pollTruth();
   } catch (error) { el("status").textContent = `Read/connection error: ${error.message}. Displayed data may be stale.`; el("status").className = "error"; }
   setTimeout(poll, 1000);
 }
-async function pollTruth() {
+async function pollTruth(force=false) {
   const section = el("inside");
   section.hidden = metadata.session_kind !== "simulated";
   if (section.hidden) return;
@@ -262,7 +375,7 @@ async function pollTruth() {
     const rows = data.rows || [];
     truthRows = rows;
     const revision = JSON.stringify([data.status,data.generation,rows.length,rows.at(-1)?.sequence,data.run_id]);
-    if (revision === truthRevision) return;
+    if (!force && revision === truthRevision) return;
     truthRevision = revision;
     if (data.status !== "ready" || !rows.length) { Plotly.purge("truth-chart"); return; }
     const p = data.parameters || rows[0]?.parameters || {};
@@ -285,7 +398,7 @@ async function pollTruth() {
     ];
     const truthTicks = elapsedAxis(rows.map(r=>r.virtual_time_s/60), el("truth-chart").layout?.xaxis?.autorange ? null : el("truth-chart").layout?.xaxis?.range);
     const base={gridcolor:"#304254",automargin:true};
-    await Plotly.react("truth-chart",traces,{paper_bgcolor:"#152330",plot_bgcolor:"#152330",font:{color:"#c9d8e5"},height:640,
+    const truthLayout={paper_bgcolor:"#152330",plot_bgcolor:"#152330",font:{color:"#c9d8e5"},height:640,
       margin:{t:90,b:50,l:95,r:25},uirevision:metadata.session_id+":"+data.run_id,
       legend:{orientation:"h",y:1.18,font:{size:10}},
       xaxis:{...base,...truthTicks,title:null,anchor:"y",showticklabels:false},
@@ -294,8 +407,10 @@ async function pollTruth() {
       yaxis:{...base,domain:[.72,1],range:[0,100],title:{text:"Remaining · %"}},
       yaxis2:{...base,domain:[.38,.64],rangemode:"tozero",title:{text:"Release · units/s"}},
       yaxis3:{...base,domain:[0,.29],type:"log",tickformat:".3e",title:{text:"Model pressure · mbar"}}
-    },{responsive:true,displaylogo:false});
-    watchElapsedZoom("truth-chart", rows.map(r=>r.virtual_time_s/60), 3);
+    };
+    viewLayout("truth-chart",truthLayout,rows.map(r=>r.virtual_time_s/60));
+    await guardedPlot("truth-chart",()=>Plotly.react("truth-chart",traces,truthLayout,{responsive:true,displaylogo:false,scrollZoom:true}));
+    watchTimeView("truth-chart", rows.map(r=>r.virtual_time_s/60));
     el("truth-chart").removeAllListeners("plotly_click");
     el("truth-chart").on("plotly_click", clicked => {
       const row = truthRows.find(r => r.sequence === clicked.points[0]?.customdata);
@@ -307,9 +422,27 @@ async function pollTruth() {
     });
   } catch (error) { el("truth-status").textContent = "Model state unavailable: " + error.message; }
 }
-el("clock").addEventListener("change", draw);
-el("fit").addEventListener("click", () => Plotly.relayout("chart", { "xaxis.autorange": true, "xaxis2.autorange": true, "xaxis3.autorange": true, "xaxis4.autorange": true, "yaxis.autorange": true, "yaxis2.autorange": true, "yaxis3.autorange": true }));
-el("follow").addEventListener("change", draw);
+el("clock").addEventListener("change", ()=>{resetTimeView("chart");draw().catch(showViewError);});
+for(const id of ["chart","truth-chart"]) {
+  const [selectId,,count]=viewIds(id), isMain=id==="chart";
+  const redraw=()=>isMain?draw():pollTruth(true);
+  el(selectId).addEventListener("change",()=>{
+    captureRange(id);timeViews[id].mode=el(selectId).value;
+    redraw().catch(showViewError);
+  });
+  el(isMain?"fit":"truth-fit").addEventListener("click",async()=>{
+    resetTimeView(id);
+    try {
+      if(el(id).layout) {
+        const update={};
+        for(let i=1;i<=count;i++) update[(i===1?"yaxis":"yaxis"+i)+".autorange"]=true;
+        await guardedPlot(id,()=>Plotly.relayout(id,update));
+      }
+      await redraw();
+    } catch(error) {showViewError(error);}
+  });
+}
+
 async function refreshRuns() {
   try {
     const response = await fetch("/api/runs", {cache:"no-store", signal:AbortSignal.timeout(5000)});

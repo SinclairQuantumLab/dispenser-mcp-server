@@ -73,6 +73,12 @@ HEADERS = {
         "confidence_value",
         "completion_outcome",
         "dispenser_response",
+        "token_usage_id",
+        "total_tokens",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "token_model",
     ],
 }
 
@@ -135,11 +141,18 @@ def projections(event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         )
     )
     if kind == "decision":
+        usage = as_dict(as_dict(payload.get("action_context")).get("token_usage"))
         rows.append(
             (
                 "decisions",
                 {
                     **base,
+                    "token_usage_id": usage.get("usage_id"),
+                    "total_tokens": usage.get("total_tokens"),
+                    "input_tokens": usage.get("input_tokens"),
+                    "output_tokens": usage.get("output_tokens"),
+                    "cached_input_tokens": usage.get("cached_input_tokens"),
+                    "token_model": usage.get("model"),
                     "chosen_action": payload["chosen_action"],
                     "rationale_summary": payload["rationale_summary"],
                     "basis_event_ids_json": json.dumps(payload["basis_event_ids"]),

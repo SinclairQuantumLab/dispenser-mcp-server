@@ -188,3 +188,8 @@
 - Remote update workflow: modify locally, push, then root asks the operator to
   pull and restart. Do not add compatibility layers for stale remote code or
   administer the remote host as a substitute for the operator's deployment.
+- Dashboard time views are per chart: Fixed preserves range, Rolling retains
+  user-selected width, Full fits all plotted records. Only new data moves Rolling.
+- Optional token_usage is caller-reported accounting, never automatic app usage,
+  billing truth or a conditioning policy input. Preserve missing values; deduplicate
+  usage_id per run for display, warn on conflicting repeats, keep raw submissions.
