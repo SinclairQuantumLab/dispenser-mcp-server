@@ -87,7 +87,11 @@ class RecordingAdapter:
             except SimulationError as error:
                 rejection = f"Not executed: {error}"
         return await self.service.process_call(
-            name, args, self._dispatch, rejection=rejection
+            name,
+            args,
+            self._dispatch,
+            rejection=rejection,
+            request_virtual_time_s=self.router.simulator.state.virtual_time_s,
         )
 
     async def _dispatch(self, name: str, arguments: dict[str, Any]) -> CallToolResult:

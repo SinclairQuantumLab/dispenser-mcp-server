@@ -135,16 +135,24 @@ const intentsByCall = new Map();
 const num = value => typeof value === "number" && Number.isFinite(value) ? value : null;
 const fmt = value => num(value) === null ? "—" : value.toLocaleString("en-US", { maximumFractionDigits: 4 });
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
+const resultsByCall = new Map();
 function virtualMinutes(row) {
-  if (num(row.virtual_time_s) !== null) return row.virtual_time_s / 60;
   const event = byId.get(row.event_id) || row;
-  const ctx = event.payload?.action_context || event.payload?.arguments?.action_context;
-  if (typeof ctx?.decision_at === "string" && metadata.observed_time_origin) {
-    const seconds = (Date.parse(ctx.decision_at) - Date.parse(metadata.observed_time_origin)) / 1000;
-    if (Number.isFinite(seconds)) return seconds / 60;
+  const basis = event.virtual_time_basis || row.virtual_time_basis;
+  if (num(row.virtual_time_s) !== null && basis !== "agent_decision_time") return row.virtual_time_s / 60;
+  const result = resultsByCall.get(row.call_id || event.call_id);
+  if (result && result !== event) {
+    if (num(result.virtual_time_s) !== null && result.virtual_time_basis !== "agent_decision_time") return result.virtual_time_s / 60;
+    const timing = result.payload?.result?._meta?.simulation_timing;
+    if (num(timing?.virtual_time_s) !== null) return timing.virtual_time_s / 60;
   }
-  const intent = intentsByCall.get(row.call_id);
-  return intent && intent !== event ? virtualMinutes(intent) : null;
+  return null;
+}
+function placementLabel(row) {
+  const event=byId.get(row.event_id)||row;
+  if (event.virtual_time_basis==="simulator_request_clock") return "Known simulator clock at receipt, before this call advances time (not a measurement)";
+  if (!row.observed_at && event.virtual_time_basis!=="observed_time_origin") return "Placed at same-call result time; exact request time unavailable (not a measurement)";
+  return "Returned observation time";
 }
 const xFor = row => el("clock").value === "virtual" ? virtualMinutes(row) : row.recorded_at;
 
@@ -169,6 +177,7 @@ function selectEvent(id, jump = false) {
   if (num(args.target_current_a) !== null) readable.append(text("p", "Requested load-current target: " + fmt(args.target_current_a) + " A"));
   if (num(args.expected_current_a) !== null) readable.append(text("p", "Expected previous load-current setting: " + fmt(args.expected_current_a) + " A (must match before the change)."));
   readable.append(text("p", "MCP receipt: " + (event.payload?.received_at || event.received_at || event.recorded_at) + " · Source observation: " + (observations.find(r => r.event_id === id)?.observed_at || event.observed_at || event.payload?.result?.structuredContent?.observed_at || "not available")));
+  if (el("clock").value === "virtual") readable.append(text("p", virtualMinutes(event) === null ? "Virtual placement unavailable; real decision/receipt timestamps remain unchanged." : "Virtual placement: " + placementLabel(event), "muted"));
   const links = text("div", "", "links");
   for (const related of events.filter(e => (event.call_id && e.call_id === event.call_id) || (event.decision_id && e.decision_id === event.decision_id))) {
     if (related.event_id !== id) links.append(eventButton(related.event_id, shortId(related.event_id) + " " + outcome(related), false));
@@ -301,7 +310,7 @@ async function draw() {
   traces.push({ type: "scatter", mode: "markers", name: "Requested load target · A", x: requested.map(xFor), y: requested.map(r => r.requested_load_current_a), xaxis: "x2", yaxis: "y2", marker: { color: "#efbc72", symbol: "diamond-open", size: 9 }, customdata: requested.map(r => r.event_id), text: requested.map(r => shortId(r.event_id)), hovertemplate: "%{text}<br>Requested load: %{y} A<extra></extra>" });
   for (const [status, y, color, symbol, label] of [["intent", 3, "#efbc72", "diamond-open", "Requested"], ["succeeded", 2, "#6edbc9", "circle", "Completed"], ["not_executed", 1, "#cbb9ff", "square-open", "Not executed"], ["failed", 0, "#fb978d", "x", "Error / state uncertain"]]) {
     const rows = controls.filter(r => (status === "not_executed" ? outcome(byId.get(r.event_id)) === "Not executed" : r.status === status && outcome(byId.get(r.event_id)) !== "Not executed") && xFor(r) !== null);
-    traces.push({ type: "scatter", mode: "markers", name: label, x: rows.map(xFor), y: rows.map(() => y), xaxis: "x4", yaxis: "y4", marker: { color, symbol, size: 10 }, customdata: rows.map(r => r.event_id), text: rows.map(r => `${shortId(r.event_id)} · ${toolLabel(r.tool)}<br>${outcome(byId.get(r.event_id))}<br>${r.error || ""}${el("clock").value === "virtual" && !r.observed_at ? "<br>Position: agent-declared decision time (not an observation)" : ""}`), hovertemplate: "%{text}<extra></extra>" });
+    traces.push({ type: "scatter", mode: "markers", name: label, x: rows.map(xFor), y: rows.map(() => y), xaxis: "x4", yaxis: "y4", marker: { color, symbol, size: 10 }, customdata: rows.map(r => r.event_id), text: rows.map(r => `${shortId(r.event_id)} · ${toolLabel(r.tool)}<br>${outcome(byId.get(r.event_id))}<br>${r.error || ""}${el("clock").value === "virtual" && !r.observed_at ? "<br>Position: "+placementLabel(r) : ""}`), hovertemplate: "%{text}<extra></extra>" });
   }
   const elapsedValues = traces.flatMap(t => t.x);
   const elapsedTicks = elapsedAxis(elapsedValues, el("chart").layout?.xaxis?.autorange ? null : el("chart").layout?.xaxis?.range);
@@ -333,7 +342,7 @@ async function poll() {
     const data = await response.json();
     el("view-mode").textContent = data.recording_view === "saved_recording" ? "SAVED RUN" : "LIVE VIEW · current process";
     const changed = data.reset || (data.events?.length || 0) > 0;
-    if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); recordNumbers.clear(); selectedId = null; }
+    if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); resultsByCall.clear(); recordNumbers.clear(); selectedId = null; }
     metadata = data.metadata || metadata;
     if (metadata.session_id && clockInitializedFor !== metadata.session_id) {
       el("clock").value = metadata.session_kind === "simulated" && metadata.observed_time_origin ? "virtual" : "wall";
@@ -342,7 +351,7 @@ async function poll() {
     }
     generation = data.generation ?? generation; cursor = data.cursor ?? cursor;
     events.push(...(data.events || [])); observations.push(...(data.observations || [])); controls.push(...(data.controls || [])); decisions.push(...(data.decisions || []));
-    for (const event of data.events || []) { byId.set(event.event_id, event); recordNumbers.set(event.event_id, recordNumbers.size + 1); if (event.kind === "call_intent") intentsByCall.set(event.call_id, event); }
+    for (const event of data.events || []) { byId.set(event.event_id, event); recordNumbers.set(event.event_id, recordNumbers.size + 1); if (event.kind === "call_intent") intentsByCall.set(event.call_id, event); if (event.kind === "call_result" || event.kind === "call_error") resultsByCall.set(event.call_id,event); }
     const simulated = metadata.session_kind === "simulated", live = metadata.session_kind === "live";
     el("mode").className = "mode-strip" + (live ? " live" : "");
     el("mode").replaceChildren(text("div", simulated ? "◈ SIMULATION" : live ? "◆ LIVE HARDWARE" : "? FIXTURE / SOURCE UNKNOWN"), text("small", live ? "Hardware-source recording. This banner does NOT mean output is energized or measurements are current." : "Simulated equipment only — no real equipment is connected to this recording."));

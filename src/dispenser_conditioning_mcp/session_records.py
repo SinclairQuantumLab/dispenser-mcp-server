@@ -370,14 +370,18 @@ class SessionRecorder:
             "call_id": call_id,
             "decision_id": decision_id,
             "virtual_time_s": number(virtual_time_s),
-            "virtual_time_basis": "caller_context"
+            "virtual_time_basis": (
+                "simulator_request_clock"
+                if "request_virtual_time_s" in payload
+                else "caller_context"
+            )
             if number(virtual_time_s) is not None
             else None,
             "payload": json_value(payload),
         }
         state = content_state(as_dict(payload.get("result")))
         observed_at = state.get("observed_at")
-        timestamp = observed_at or event.get("decision_at")
+        timestamp = observed_at
         if timestamp and self.observed_time_origin:
             try:
                 observed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
@@ -385,9 +389,7 @@ class SessionRecorder:
                     self.observed_time_origin.replace("Z", "+00:00")
                 )
                 event["virtual_time_s"] = (observed - origin).total_seconds()
-                event["virtual_time_basis"] = (
-                    "observed_time_origin" if observed_at else "agent_decision_time"
-                )
+                event["virtual_time_basis"] = "observed_time_origin"
             except (ValueError, TypeError, AttributeError):
                 event["virtual_time_s"] = None
                 event["virtual_time_basis"] = None

@@ -433,3 +433,60 @@ add them again. Reuse the same ID when one inference supplies several MCP calls.
 The dashboard counts each ID once, keeps the first report on conflicts and warns.
 CSV preserves repeated submissions: deduplicate `token_usage_id` when analyzing
 usage offline. This is a reported subset, not measured app usage or a billing total.
+
+### Optional Codex caller usage checkpoints
+
+The MCP server/Pi never reads Codex history. Pulling this repository alone does
+not collect caller metrics. The standalone `tools/codex_token_usage.py` helper
+runs only on the caller computer, against one explicitly selected rollout and
+one per-conditioning-run cursor. It does not discover threads or read other
+rollouts. Start a fresh baseline before a new run; prior development/thread
+usage is excluded. One caller owns the cursor.
+
+Example in a caller script launched from this checkout (adapt the two explicit
+local paths; keep the cursor with that caller's local run notes):
+
+```python
+from pathlib import Path
+from tools.codex_token_usage import CodexUsageCheckpoint
+
+usage = CodexUsageCheckpoint(Path("/explicit/caller/rollout.jsonl"),
+                             Path("/explicit/caller/run/usage-cursor.json"))
+usage.baseline()  # Once before the run, not before every action.
+
+# For each already-chosen normal action/declaration with action_context:
+try:
+    supplied = usage.decorate(arguments)
+except (OSError, ValueError, KeyError, TypeError) as error:
+    print(f"Token accounting unavailable: {error}")  # Caller/operator diagnostic.
+    supplied = arguments  # Optional metrics must not prevent an action.
+result = await client.call_tool(tool_name, supplied)
+meta = (result.meta or {}).get("dispenser_conditioning", {})
+batch = supplied.get("action_context", {}).get("token_usage")
+if batch and meta.get("recording_status") == "recorded" and meta.get("decision_id"):
+    try:
+        usage.acknowledge(batch["usage_id"])
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"Token acknowledgement failed: {error}; preserve the action result, do not replay it.")
+```
+
+No acknowledgement means the same pending batch/ID is attached at the next
+checkpoint, without issuing or retrying any control automatically. A transport
+error or degraded recording must not trigger a hardware replay to repair usage.
+Call shutdown normally, without decoration. Keep the cursor if reporting fails.
+
+Counts are actual newly reported cumulative-counter deltas since the acknowledged
+checkpoint, not lifetime totals or an estimate of this action's cost. Accounting
+may arrive after the inference that chose an action; a later action/declaration
+can carry that batch. Missing, incomplete or reset counters are unavailable,
+not fabricated zero. Cached tokens are already included in input; reasoning is
+already included in output. The helper does not infer a model name.
+
+### Request positions on simulated time charts
+
+Real decision/receipt timestamps and virtual observation timestamps are different
+clocks. New simulator request/decision records retain the known virtual clock at
+receipt, before the call's elapsed-time advancement. For an older request without
+that clock, the viewer can place it at the same call's returned time, explicitly
+labelled as approximate placement rather than a request-time reading. Records
+are not rewritten; actual observations keep their own timestamps.

@@ -136,7 +136,11 @@ class RecordingService:
         if self.recorder is None:
             raise OSError("Session recorder unavailable")
         return self.recorder.append_event(
-            kind, payload, call_id=call_id, decision_id=decision_id
+            kind,
+            payload,
+            call_id=call_id,
+            decision_id=decision_id,
+            virtual_time_s=payload.get("request_virtual_time_s"),
         )
 
     async def process_call(
@@ -146,6 +150,7 @@ class RecordingService:
         dispatch: Callable[[str, dict[str, Any]], Awaitable[CallToolResult]],
         *,
         rejection: str | None = None,
+        request_virtual_time_s: float | None = None,
     ) -> CallToolResult:
         """Validate context, record and dispatch once with action_context removed.
 
@@ -194,6 +199,14 @@ class RecordingService:
 
             def append(kind: str, payload: dict[str, Any]) -> dict[str, Any] | None:
                 try:
+                    if (
+                        kind in {"decision", "call_intent"}
+                        and request_virtual_time_s is not None
+                    ):
+                        payload = {
+                            **payload,
+                            "request_virtual_time_s": request_virtual_time_s,
+                        }
                     return self._append(kind, payload, call_id, decision_id)
                 except Exception:
                     LOGGER.exception(

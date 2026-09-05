@@ -90,9 +90,12 @@ MCP metadata. The existing `structuredContent` schemas are preserved.
 
 `decision_at` is supplied by the agent. `received_at` is the server's UTC call
 receipt time; `recorded_at` is the raw record write time; `observed_at` remains
-the instrument/simulator observation time. They are not interchangeable. For a
-declared synthetic source-time origin, plots can position intents by agent
-decision time while keeping it distinct from actual observation time. Missing
+the instrument/simulator observation time. They are not interchangeable. Simulator requests/decisions record the known virtual clock at receipt,
+before this call advances time, with basis `simulator_request_clock`. This is
+not a new observation. Real decision times are never subtracted from the
+synthetic observation epoch. When this clock is absent in stored records, the
+viewer may place a request at its same-call result time with an explicit label;
+raw timestamps stay unchanged. Missing
 readings remain missing, and measured native CH1 current is never doubled to
 invent a total parallel-load measurement.
 

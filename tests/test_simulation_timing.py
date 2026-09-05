@@ -91,3 +91,17 @@ async def test_public_timing_validation_declaration_and_error_recording(tmp_path
         == 40
         for event in events
     )
+    for event in events:
+        if event["kind"] in {"call_intent", "decision"}:
+            assert event["virtual_time_s"] >= 0
+            assert event["virtual_time_basis"] == "simulator_request_clock"
+    declaration_event = next(e for e in events if e["kind"] == "decision")
+    assert declaration_event["virtual_time_s"] == 60
+    assert declaration_event["decision_at"] == "2026-09-05T12:00:00Z"
+    failed_intent = next(
+        e
+        for e in events
+        if e["kind"] == "call_intent"
+        and e["payload"]["tool"] == "set_dispenser_current"
+    )
+    assert failed_intent["virtual_time_s"] == 60  # Receipt, before the 40-second floor.
