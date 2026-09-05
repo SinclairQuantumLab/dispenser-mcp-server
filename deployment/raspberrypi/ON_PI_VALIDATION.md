@@ -1,3 +1,8 @@
+> Historical reference — retained for provenance, not an active deployment or
+> testing gate. Current source-checkout research instructions are in the
+> server README and deployment/raspberrypi/QUICK_COMMISSIONING.md. Legacy
+> settings, hardened bundles, and commands below may not match the current pilot.
+
 # On-Pi clean-install validation
 
 This candidate is a dependency-only bundle. Run these checks on the exact

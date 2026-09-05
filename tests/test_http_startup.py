@@ -1,13 +1,15 @@
-import os
+import asyncio
+import socket
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from mcp import Client, StdioServerParameters
+from mcp import Client
 
 
 @pytest.mark.anyio
-async def test_stdio_server_starts_from_three_toml_documents(tmp_path: Path) -> None:
+async def test_http_server_starts_from_three_toml_documents(tmp_path: Path) -> None:
     project = tmp_path / "offline-checkout"
     client_file = project / "dependencies" / "hicube" / "hicube_neo_client.py"
     client_file.parent.mkdir(parents=True)
@@ -24,7 +26,7 @@ class HiCubeNeoClient:
         return SimpleNamespace(
             observed_at=datetime(2026, 9, 3, 13, 0, tzinfo=UTC),
             g1_pressure_mbar=4.0e-7,
-            serial_number="TC80-STDIO",
+            serial_number="TC80-HTTP",
         )
     def close(self): return None
 """.lstrip(),
@@ -80,7 +82,7 @@ class Device:
         return SimpleNamespace(
             manufacturer="Siglent Technologies",
             model=SimpleNamespace(value="SPD3303X"),
-            serial_number="SPD-STDIO",
+            serial_number="SPD-HTTP",
             firmware_version="1.0",
         )
     def close(self): return None
@@ -100,6 +102,9 @@ class SPD3000:
 """.lstrip(),
         encoding="utf-8",
     )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
     settings = project / "settings"
     gateway_settings = settings / "py-siglent-spd3000"
     gateway_settings.mkdir(parents=True)
@@ -107,10 +112,10 @@ class SPD3000:
         """
 schema_version = 1
 acceptance_context = "production_dispenser"
-expected_serial_number = "SPD-STDIO"
+expected_serial_number = "SPD-HTTP"
 compliance_voltage_v = 10.0
 control_enabled = false
-transport = "stdio"
+allow_remote_access = false
 """.lstrip(),
         encoding="utf-8",
     )
@@ -135,7 +140,12 @@ minimum_command_interval_ms = 100.0
     (gateway_settings / "gateway-auth.toml").write_text(
         'token = "offline-test-token"\n', encoding="utf-8"
     )
-    bootstrap = tmp_path / "run_offline_stdio.py"
+    main_settings = settings / "mcp-settings.toml"
+    main_settings.write_text(
+        main_settings.read_text(encoding="utf-8") + f"port = {port}\n",
+        encoding="utf-8",
+    )
+    bootstrap = tmp_path / "run_offline_http.py"
     bootstrap.write_text(
         """
 import sys
@@ -157,22 +167,40 @@ run_configured_transport(server, transport)
         encoding="utf-8",
     )
 
-    parameters = StdioServerParameters(
-        command=os.environ.get("DISPENSER_TEST_PACKED_PYTHON", sys.executable),
-        args=[str(bootstrap), str(project)],
+    process = subprocess.Popen(
+        [sys.executable, str(bootstrap), str(project)],
         cwd=Path(__file__).parents[1],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    async with Client(parameters) as client:
-        tools = (await client.list_tools()).tools
-        pressure_result = await client.call_tool("read_vacuum_pressure", {})
-        power_result = await client.call_tool("read_dispenser_power_state", {})
+    try:
+        for _ in range(100):
+            assert process.poll() is None, "HTTP startup failed"
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            except OSError:
+                await asyncio.sleep(0.05)
+            else:
+                del reader
+                writer.close()
+                await writer.wait_closed()
+                break
+        else:
+            pytest.fail("HTTP listener did not start")
+        async with Client(f"http://127.0.0.1:{port}/mcp") as client:
+            tools = (await client.list_tools()).tools
+            pressure_result = await client.call_tool("read_vacuum_pressure", {})
+            power_result = await client.call_tool("read_dispenser_power_state", {})
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
 
     assert len(tools) == 6
     assert pressure_result.is_error is False
     assert pressure_result.structured_content is not None
     assert pressure_result.structured_content["pressure_mbar"] == 4.0e-7
-    assert pressure_result.structured_content["p1_drive_serial_number"] == "TC80-STDIO"
+    assert pressure_result.structured_content["p1_drive_serial_number"] == "TC80-HTTP"
     assert power_result.is_error is False
     assert power_result.structured_content is not None
-    assert power_result.structured_content["serial_number"] == "SPD-STDIO"
+    assert power_result.structured_content["serial_number"] == "SPD-HTTP"
     assert power_result.structured_content["load_current_factor"] == 2

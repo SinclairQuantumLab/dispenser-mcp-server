@@ -104,42 +104,40 @@
   inputs. Never coerce strings or booleans into current values.
 - Software shutdown and the unloaded-HIL software latch are not a physical
   emergency stop, watchdog, or guarantee of power removal.
-- Keep stdio as the default transport. Streamable HTTP must bind only to
-  loopback, enforce exact Host/Origin policy, and reject control-enabled startup
-  unless an operator-owned authenticated SSH tunnel or reverse proxy is
-  explicitly bound at startup.
-- Treat HTTP trust mode as an operator assertion about a real external security
-  boundary, not as authentication implemented by this server. Do not add a
-  weak bearer-token scheme. The AI client may receive only the MCP endpoint and
-  tools, never process lifecycle, settings, credentials, auth files, durable
-  state, logs, or reset authority.
-- Deploy unloaded-HIL and production profiles as separate process instances
-  with distinct ports, authentication paths, policies, and HIL state. Permit
-  only one writer for one physical PSU.
-- A dedicated Windows host must install runtime dependencies from a reviewed,
-  target-specific marker-free lock and release-manifest-verified wheelhouse with
-  index access disabled,
-  then compare the exact installed distribution inventory. The complete base
-  CPython runtime tree must also match an independently approved manifest that
-  co-records the clean-install tree and approved offline installer identity.
-  This integrity record does not prove causal installation provenance.
-  `uv.lock` or a `python.exe` hash alone is not a deployment proof.
-- Initialize a fresh protected deployment root and recursively reject every ACL
-  identity, owner, or service-account right outside the documented allow-only
-  policy. Protect the root before creating descendants; reject a service user
-  that is a direct local Administrators member. Independently verify the
-  effective service token and enabled privileges during commissioning. Do not
-  reuse a pre-existing root or rely
-  on `icacls /grant:r` to remove other explicit access entries.
+- Always serve Streamable HTTP at the fixed /mcp path. Main settings expose only
+  allow_remote_access (strict boolean, default false) and port (default 8000).
+  False binds 127.0.0.1; true binds 0.0.0.0. Direct IP and hostname clients work
+  without a mandatory SSH tunnel or manual Host/Origin lists. Do not detect LAN
+  versus Internet or discover interfaces.
+- Reject browser Origin headers for the native-client pilot; retain local Host
+  checks and bounded request bodies. Remote exposure is the operator's choice.
+- During a live run, the execution agent uses MCP tools. The operator owns
+  process administration, credentials, and interlock initialization/reset.
+  Development work may inspect and edit source and use ordinary diagnostics.
+- Preserve one writer per physical PSU.
+- Historical hardened Windows/Pi deployment material is reference-only and
+  imposes no gates on this supervised source-checkout research workflow.
 
 ## Development
 
+- Reuse the dedicated GPT-6 Astra server engineer. When replacing an older-model
+  engineer, use a GPT-6 Astra successor and obtain a concise predecessor handoff
+  covering current state, decisions, changes, checks, and remaining work.
+- The coordinating root reviews the engineer's results without rerunning tests.
+  Do not add reviewers or subagents unless the user explicitly requests them.
 - Use Python 3.13 and `uv`.
 - Keep device integration, domain normalization, MCP registration, and startup
-  transport selection separate and independently testable.
+  HTTP startup separate and independently testable.
 - Tests must use fakes and may not contact hardware, scan a network, or read
   credentials.
-- Run `uv run ruff check .`, `uv run pyright`, and `uv run pytest` before
-  integration.
-- stdout is reserved exclusively for the stdio MCP protocol. Diagnostics go to
-  stderr.
+- Use focused tests for affected configuration, transport, startup, protocol, and
+  deployment-check behavior. Run Ruff only on changed Python files; run Pyright
+  when an interface change warrants it. Do not require full suites, wheel builds,
+  install audits, additional reviewers, or live checks for routine pilot edits.
+- Keep source checkout + uv sync + editable pinned submodule as the active path.
+  Do not bump versions or rewrite historical reports unless explicitly requested.
+- Distinguish sanitized model-facing tool errors from ordinary operator
+  diagnostics: local paths, endpoints, and useful failure context may appear in
+  operator logs. Credentials and tokens must never appear in either.
+- Preserve labeled historical records; do not present old verification campaigns
+  as gates or as evidence for new changes.

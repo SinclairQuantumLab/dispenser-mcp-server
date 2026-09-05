@@ -14,7 +14,7 @@ from dispenser_conditioning_mcp.transport import (
 
 
 def main() -> None:
-    """Validate operator configuration and run the selected startup transport."""
+    """Validate operator configuration and run the HTTP listener."""
 
     logging.basicConfig(
         level=logging.WARNING,

@@ -1,77 +1,72 @@
 # Raspberry Pi Research Quick Commissioning
 
-This is the current source-checkout path for package 0.6.1. It uses the same
-strict TOML settings as every supported development host. It is not the future
-hardened/offline systemd release bundle.
+This is the supervised source-checkout workflow. Use Git, uv, and Python 3.13
+on the Pi. First commissioning is control-disabled and read-only.
 
-First commissioning is control-disabled and read-only. No install or startup
-command below contacts a device; the two read tools do so only when called.
-
-## Prerequisites
-
-- Raspberry Pi OS 64-bit on `aarch64`;
-- Git and `uv`;
-- Python 3.13; and
-- operator-approved endpoint, identity, compliance, acceptance-context, and
-  gateway-token values.
-
-```sh
-test "$(uname -m)" = aarch64
-git --version
-uv --version
-```
-
-## Clone, configure, and validate
+## Install and configure
 
 ```sh
 git clone --recurse-submodules https://github.com/SinclairQuantumLab/dispenser-mcp-server.git
 cd dispenser-mcp-server
-git submodule status
 uv sync
 cp settings/py-siglent-spd3000/gateway-auth.toml.template \
   settings/py-siglent-spd3000/gateway-auth.toml
 chmod 600 settings/py-siglent-spd3000/gateway-auth.toml
 ```
 
-The submodule line must begin with a space, not `-` or `+`. Edit these files:
+Fill the placeholders in the three nonsecret settings files:
+`settings/mcp-settings.toml`, `settings/hicube-neo-client-settings.toml`, and
+`settings/py-siglent-spd3000/gateway-settings.toml`. Put the gateway token only
+in the untracked `settings/py-siglent-spd3000/gateway-auth.toml`.
 
-```text
-settings/mcp-settings.toml
-settings/hicube-neo-client-settings.toml
-settings/py-siglent-spd3000/gateway-settings.toml
-settings/py-siglent-spd3000/gateway-auth.toml
+Main listener settings are top-level:
+
+```toml
+control_enabled = false
+allow_remote_access = true
+port = 8000
 ```
 
-Fill every placeholder. Put only the token in `gateway-auth.toml`, never commit
-that file, and keep `control_enabled = false`. The MCP derives the vendored
-HiCube file, Siglent submodule source, settings directory, and authentication
-path from the checkout. Do not configure them as environment variables.
+False is the default for both booleans. Remote access true binds all IPv4
+interfaces; false binds only 127.0.0.1. Hardware control is a separate setting.
+Use the Pi's actual IP or resolvable hostname, such as
+`http://<Pi-IP>:8000/mcp` or `http://raspberrypi.local:8000/mcp`.
+No SSH tunnel or manual Host list is required. The native MCP client must omit
+the Origin header; browser clients need a future explicit policy. This pilot
+does not authenticate incoming MCP clients.
+
+## Start and check
 
 ```sh
 uv run python -m dispenser_conditioning_mcp.deployment_check
 uv run dispenser-conditioning-mcp
 ```
 
-An offline-validation failure reports one safe stage code and sanitized message
-on stderr and exits with status 2. Use `--diagnostic` to append only the
-exception class; it never prints raw exception text, settings values, device
-addresses, local paths, authentication contents, or a traceback. Unknown CLI
-options are rejected. The offline check validates transport policy but never
-opens a network connection or constructs a device session.
+Keep the process running and register its URL in your MCP host. Startup and the
+offline check do not contact hardware. Discover the six tools, then call only
+`read_vacuum_pressure` and `read_dispenser_power_state`. Confirm pressure
+provenance, exact PSU identity, parallel mode, outputs off, and disabled control.
 
-Stdio is the default. For first commissioning, discover the six tools and call
-only `read_vacuum_pressure` and `read_dispenser_power_state`. Confirm pressure
-provenance, exact PSU identity, parallel mode, outputs off, and
-`control_enabled=false`, then stop.
+Operator diagnostics may include nonsecret paths, endpoints, and failure context.
+The offline checker provides stage codes; `--diagnostic` adds exception class.
+Model-facing tool errors remain sanitized. Never share authentication contents.
 
-Streamable HTTP remains an optional loopback-only transport configured in
-`mcp-settings.toml`. Authentication or SSH forwarding remains operator-owned;
-see the [transport contract](../../docs/transport-deployment-contract.md).
+For a later supervised power run, preserve the fixed 2.4 A native/4.8 A commanded
+load ceilings, exact 0.2 A load upward steps, identity checks, and fresh physical
+wiring confirmation. Unloaded-HIL additionally requires its existing durable
+state initialized outside MCP after physical verification. Its trip, pending
+guard, and operator-only reset boundaries remain in force. See the
+[power contract](../../docs/power-control-contract.md) and
+[acceptance sequence](../../README.md#minimal-unloaded-hil-acceptance-sequence).
 
-## Boundary
+## Updating an existing checkout
 
-This quick path does not provide a hardened service identity, boot service,
-offline wheelhouse, authenticated release bundle, SSH policy, or physical
-watchdog. Do not enable output or change current during first commissioning.
-Any later live mutation still requires the existing protected durable-state
-boundary, physical verification, fresh human confirmation, and safety review.
+Back up your edited nonsecret settings before pulling: tracked TOMLs can conflict
+with upstream edits. Keep acceptance context, serial, compliance, control, device
+settings, and the untracked authentication file. Remove `transport` and the
+entire `[streamable_http]` table. Add `allow_remote_access` and `port` at the
+top level; old transport options are rejected. Then run `uv sync`.
+
+Historical hardened deployment scripts and reports are reference-only. Their
+offline bundles, manifest/ACL audits, and SSH setup are not prerequisites for
+this pilot. No wheel build or broad test campaign is required.

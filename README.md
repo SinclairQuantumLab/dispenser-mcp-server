@@ -1,7 +1,6 @@
 # Dispenser Conditioning MCP
 
-This Python 3.13 MCP server exposes a bounded interface over default stdio or a
-reviewed loopback-only Streamable HTTP deployment for:
+This Python 3.13 MCP server exposes a bounded Streamable HTTP interface for:
 
 - one read-only Pfeiffer HiCube Neo G1 total-pressure observation; and
 - one operator-bound Siglent SPD3000 dispenser-power topology.
@@ -15,7 +14,7 @@ See the exact [pressure contract](docs/pressure-observation-contract.md),
 [transport/deployment contract](docs/transport-deployment-contract.md), plus the
 [verification report](docs/verification-report.md).
 
-## Quick start from source
+## Quick start
 
 This Python repository runs on any supported host with Git, `uv`, and Python
 3.13. First commissioning is read-only. Keep `control_enabled = false`, and
@@ -54,17 +53,24 @@ uv run python -m dispenser_conditioning_mcp.deployment_check
 uv run dispenser-conditioning-mcp
 ```
 
-Offline validation failures use a stable stage code and a sanitized operator
-message on stderr, with exit status 2. They never print a traceback, settings
-value, endpoint, absolute path, token, or raw integration exception. Add
-`--diagnostic` only when the local operator needs the exception class; it does
-not reveal raw exception text. The stages are `CONFIG`, `TRANSPORT_POLICY`,
-`HICUBE_IMPORT`, `SIGLENT_IMPORT`, `AUTH_ACCESS`, and `SERVER_ASSEMBLY`.
+The offline check validates local settings and imports without a device
+connection. Its stage codes identify configuration, transport, imports,
+authentication-file access, and server assembly failures. `--diagnostic`
+includes the exception class. These are operator diagnostics, distinct from
+sanitized model-facing tool errors. Ordinary local troubleshooting may inspect
+nonsecret settings, paths, endpoints, and logs; never disclose token contents.
+
+Streamable HTTP always listens at `/mcp`. The default
+`allow_remote_access = false` binds `127.0.0.1:8000`. To connect directly
+from another computer, set `allow_remote_access = true` and connect to
+`http://<Pi-IP>:8000/mcp` (or its resolvable hostname). `port` is a top-level
+integer setting. SSH forwarding is optional. This supervised native-client pilot
+rejects browser Origin headers and has no built-in client authentication.
 
 During first commissioning, call only `read_vacuum_pressure` and
 `read_dispenser_power_state`. See the
 [detailed Raspberry Pi research guide](deployment/raspberrypi/QUICK_COMMISSIONING.md)
-before selecting the transport or performing any later commissioning step.
+for the supervised commissioning sequence.
 
 ## Tool surface
 
@@ -210,10 +216,8 @@ From this directory:
 ```powershell
 git pull --ff-only
 git submodule update --init --recursive
-uv sync --all-groups
-uv run ruff check .
-uv run pyright
-uv run pytest
+uv sync
+uv run pytest tests/test_config.py tests/test_transport.py tests/test_protocol.py
 ```
 
 The canonical Siglent driver is the Git submodule at
@@ -231,15 +235,10 @@ All automated tests use injected fakes. They do not contact hardware, resolve
 configured device hosts, scan a network, read credentials, or run the Siglent
 driver's hardware-marked acceptance tests.
 
-After completing the TOML settings with control disabled, open the interactive
-MCP Inspector with:
-
-```powershell
-uv run mcp dev src/dispenser_conditioning_mcp/configured_app.py:mcp
-```
-
-The release audit also uses Inspector 2.5.0 CLI `tools/list --strict` through an
-operator-local config; see [the verification report](docs/verification-report.md).
+Use focused tests for the changed behavior and Ruff on changed Python files;
+run Pyright when an interface change warrants it. Full suites, package builds,
+and installation audits are not routine pilot-development gates. Start the HTTP
+server with the quick-start command and register its URL in your MCP client.
 
 ## Operator startup configuration
 
@@ -252,11 +251,12 @@ literals, and safety semantics remain public tool contract v0.4.3.
 
 | File | Operator settings |
 | --- | --- |
-| `settings/mcp-settings.toml` | Explicit acceptance context, expected PSU serial, fixed compliance voltage, control flag, transport, optional protected unloaded-HIL state path, and optional reviewed loopback HTTP table |
+| `settings/mcp-settings.toml` | Explicit acceptance context, expected PSU serial, fixed compliance voltage, control flag, allow_remote_access (default false), port (default 8000), and optional protected unloaded-HIL state path |
 | `settings/hicube-neo-client-settings.toml` | HiCube host, port (default 4840), and timeout (default 5 s) |
 | `settings/py-siglent-spd3000/gateway-settings.toml` | Gateway identifier, timeout (default 5 s), and minimum command interval (default 100 ms) |
 
-`control_enabled` defaults to `false`; `transport` defaults to `stdio`. The
+`control_enabled` and `allow_remote_access` default to `false`; `port` defaults to
+`8000`. The
 acceptance context, expected serial, compliance voltage, HiCube host, and
 gateway identifier have no implicit deployment value and must be filled in.
 When the context is `unloaded_hil`, `unloaded_hil_state_file` must be an absolute
@@ -287,14 +287,17 @@ authentication contract cannot drift from the gateway implementation.
 Direct socket, VXI-11, and VISA connections are denied by this deployment's
 startup policy.
 Starting the server validates local files and policy but performs no device
-connection. A corresponding tool call opens one bounded session. Streamable
-HTTP always binds to loopback. A control-enabled HTTP process starts only when
-the operator selects an
-`authenticated_ssh_tunnel` or `authenticated_reverse_proxy` deployment
-boundary. These values are assertions about infrastructure outside this
-process, not authentication mechanisms by themselves. See the
-[transport contract](docs/transport-deployment-contract.md) and
-[current Raspberry Pi development workflow](deployment/raspberrypi/QUICK_COMMISSIONING.md).
+connection. A corresponding tool call opens one bounded session. Network exposure and
+hardware control are independent settings; enabling remote access does not
+enable control. See the [transport contract](docs/transport-deployment-contract.md).
+
+When updating an existing checkout, preserve your edited settings before pulling:
+tracked TOML changes can conflict with upstream changes. Keep acceptance context,
+serial, compliance, control, instrument settings, and the untracked auth file.
+Remove `transport` and the entire `[streamable_http]` table; add
+`allow_remote_access = false` and `port = 8000` at the top level. Set the
+boolean to true when remote clients should connect directly. Old transport keys
+are rejected rather than silently ignored.
 
 ### Minimal unloaded-HIL acceptance sequence
 
@@ -330,10 +333,9 @@ conditioning or activation evidence.
 
 ## Integration and later safety layers
 
-Register the same executable through the MCP host (for example, `codex mcp add
-... -- uv --directory <this-directory> run dispenser-conditioning-mcp`). Inspect
-the advertised catalog before any live read and keep `control_enabled = false`
-in `settings/mcp-settings.toml` during catalog/read-only integration.
+Register `http://<server-IP>:8000/mcp` as a Streamable HTTP endpoint in the MCP
+host. Keep the process running and inspect the six-tool catalog before live reads.
+Use `control_enabled = false` during first catalog/read-only integration.
 
 Before unattended autonomous conditioning, separate higher-level work must add
 a persistent safety supervisor/output lease, pressure freshness and trip logic,
@@ -349,5 +351,5 @@ pressure normalization       deterministic topology/current controller
         |                         |
         +---------- strict MCP tools ----------+
                              |
-              stdio or loopback Streamable HTTP
+              Streamable HTTP at /mcp
 ```

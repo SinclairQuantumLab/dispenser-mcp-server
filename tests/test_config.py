@@ -45,7 +45,6 @@ def _write_layout(
             'expected_serial_number = "SPD-OFFLINE"\n'
             "compliance_voltage_v = 10.0\n"
             f"control_enabled = {str(control_enabled).lower()}\n"
-            'transport = "stdio"\n'
             f"{state_setting}{main_extra}"
         ),
         encoding="utf-8",
@@ -95,21 +94,21 @@ def test_three_toml_documents_build_one_fixed_policy(tmp_path: Path) -> None:
     assert configuration.siglent.upward_step_a == 0.2
     assert configuration.siglent.load_current_factor == 2
     assert configuration.siglent.control_enabled is False
-    assert configuration.startup.transport == "stdio"
+    assert configuration.startup.allow_remote_access is False
+    assert configuration.startup.port == 8000
 
 
-def test_safe_defaults_are_stdio_and_control_disabled(tmp_path: Path) -> None:
+def test_safe_defaults_are_loopback_http_and_control_disabled(tmp_path: Path) -> None:
     layout = _write_layout(tmp_path)
     text = layout.mcp_settings_file.read_text(encoding="utf-8")
-    text = text.replace("control_enabled = false\n", "").replace(
-        'transport = "stdio"\n', ""
-    )
+    text = text.replace("control_enabled = false\n", "")
     layout.mcp_settings_file.write_text(text, encoding="utf-8")
 
     configuration = OperatorConfiguration.from_toml(layout)
 
     assert configuration.startup.control_enabled is False
-    assert configuration.startup.transport == "stdio"
+    assert configuration.startup.allow_remote_access is False
+    assert configuration.startup.port == 8000
 
 
 @pytest.mark.parametrize(
@@ -272,3 +271,37 @@ def test_source_layout_is_platform_native_and_has_no_operator_path_inputs(
     assert layout.siglent_gateway_auth_file == (
         root.resolve() / "settings" / "py-siglent-spd3000" / "gateway-auth.toml"
     )
+
+
+@pytest.mark.parametrize("value", ['"false"', "0", "1", "[]"])
+def test_remote_access_requires_a_toml_boolean(tmp_path: Path, value: str) -> None:
+    layout = _write_layout(tmp_path, main_extra=f"allow_remote_access = {value}\n")
+    with pytest.raises(ConfigurationError, match="TOML boolean"):
+        OperatorConfiguration.from_toml(layout)
+
+
+@pytest.mark.parametrize("value", ["true", '"8000"', "1023", "65536"])
+def test_listener_port_requires_an_unprivileged_integer(
+    tmp_path: Path, value: str
+) -> None:
+    layout = _write_layout(tmp_path, main_extra=f"port = {value}\n")
+    with pytest.raises(ConfigurationError, match="port"):
+        OperatorConfiguration.from_toml(layout)
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        'transport = "stdio"',
+        'bind_host = "127.0.0.1"',
+        'trust_mode = "loopback_only"',
+        "allowed_hosts = []",
+        "allowed_origins = []",
+        'path = "/mcp"',
+        "[streamable_http]",
+    ],
+)
+def test_removed_transport_options_are_rejected(tmp_path: Path, setting: str) -> None:
+    layout = _write_layout(tmp_path, main_extra=setting + "\n")
+    with pytest.raises(ConfigurationError, match="unknown setting"):
+        OperatorConfiguration.from_toml(layout)

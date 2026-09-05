@@ -1,65 +1,54 @@
-# Transport and Deployment Contract
+# Transport and deployment contract
 
-Package version 0.6.1 retains the strict repository-local TOML documents
-introduced in 0.6.0 and adds stage-coded, sanitized offline startup diagnostics.
-This does not change the six-tool
-conditioning contract or the v0.4.3 power-safety semantics.
+The supervised research server always uses Streamable HTTP at the fixed
+`/mcp` path. It starts from its source checkout using `uv sync` and
+`uv run dispenser-conditioning-mcp`; the pinned Siglent submodule stays editable.
 
-## Startup settings
+## Main settings
 
-All values below are keys in `settings/mcp-settings.toml`. Unknown keys or wrong
-TOML types reject startup.
+```toml
+allow_remote_access = false
+port = 8000
+```
 
-| Key | Default | Contract |
-| --- | --- | --- |
-| `transport` | `stdio` | Exact `stdio` or `streamable-http`; all other values are rejected |
-| `control_enabled` | `false` | Strict TOML boolean; loopback-only HTTP cannot enable control |
-| `streamable_http.bind_host` | `127.0.0.1` | HTTP only; must be an explicit loopback literal/name |
-| `streamable_http.port` | `8000` | HTTP only; integer 1024–65535 |
-| `streamable_http.path` | `/mcp` | HTTP only; one absolute, non-root path without query, fragment, whitespace, backslash, or trailing slash |
-| `streamable_http.trust_mode` | `loopback_only` | Exact `loopback_only`, `authenticated_ssh_tunnel`, or `authenticated_reverse_proxy` |
-| `streamable_http.allowed_hosts` | `[]` | Reverse-proxy mode only; exact Host strings with no wildcard |
-| `streamable_http.allowed_origins` | `[]` | Reverse-proxy mode only; exact HTTPS origin strings with no wildcard |
+The boolean must be a TOML boolean, not a string or integer. False binds
+`127.0.0.1`; true binds `0.0.0.0`. The port is an integer from 1024 through
+65535. Connect with `http://127.0.0.1:8000/mcp` locally or
+`http://<server-IP>:8000/mcp` remotely. Resolvable hostnames work remotely too.
+Use the selected port in the URL. No interface discovery or LAN/Internet
+classification occurs.
 
-The `streamable_http` table is rejected while stdio is selected, preventing
-stale HTTP settings from being silently ignored. HTTP settings cannot be passed
-as MCP arguments, CLI flags, or environment variables.
+There is no public transport selector, bind_host, trust_mode, allowed_hosts,
+allowed_origins, path, or streamable_http table. These old keys fail validation.
+Network exposure does not change the independent control_enabled setting.
 
-## Fixed HTTP behavior
+## Native-client request policy
 
-- Bind is always loopback; `0.0.0.0`, `::`, a LAN address, and a DNS name other
-  than `localhost` are rejected.
-- DNS-rebinding protection is always enabled.
-- Host and Origin checks are exact; this component generates no wildcard.
-- Request body size is fixed at 256 KiB.
-- JSON response mode and stateless mode remain disabled for SDK-compatible
-  stateful Streamable HTTP transport operation. This protocol session is not an
-  experimental run-state or decision orchestrator.
-- Control-enabled HTTP rejects `loopback_only`.
-- `authenticated_ssh_tunnel` permits only the selected loopback Host headers
-  and rejects custom Host/Origin settings.
-- `authenticated_reverse_proxy` requires at least one exact proxy-facing Host;
-  loopback Host values are also accepted for the operator-owned backend hop.
-- The server does not expose a bearer-token implementation or unauthenticated
-  health route.
+All requests with an Origin header, including empty or null values, receive
+403. Native MCP clients omit this header. Browser client support requires a
+later explicit policy. The local listener also uses SDK exact Host checks for
+127.0.0.1 and localhost at the configured port. The remote listener accepts
+ordinary IP and hostname Host values without an operator allowlist.
 
-Trust mode is an operator assertion, not authentication. The named bridge must
-actually exist outside this process and must be inaccessible to the AI agent.
-An SSH tunnel must use a protected key and constrained forwarder identity. A
-reverse proxy must enforce reviewed OAuth 2.1 or mTLS and authorize a single
-writer before forwarding.
+The SDK retains Content-Type validation and a 256 KiB request-body limit.
+This policy is not authentication; incoming MCP clients are not authenticated
+by this pilot. The operator decides where the listener is reachable. SSH
+forwarding may be used but is not required for control-enabled startup.
 
-## Process boundary
+## Workflow boundaries
 
-Test-unit unloaded HIL and production dispenser deployments use separate
-processes, source checkouts/settings, auth paths, ports, and acceptance contexts. The HIL process
-alone has its own unique durable state path. Only one process may target one PSU
-at a time. Process lifecycle, settings, credentials, authentication files,
-durable state, reset, logs, and network bridge remain operator-owned.
+Startup validates local configuration without connecting to instruments.
+The six MCP tools, identity checks, physical enable confirmations, fixed
+current ceilings and steps, and unloaded-HIL durable interlock/reset boundaries
+are unchanged. Keep one writer per physical PSU. The operator owns live process
+administration, credentials, and initialization/reset; the execution agent uses
+MCP tools during the run.
 
-The MCP client receives only an authenticated endpoint and the production tool
-surface. No tool accepts transport, bind, port, path, credentials, safety
-policy, durable state, or reset parameters.
+Operator diagnostics may show useful nonsecret settings, paths, endpoints, and
+failure context. Model-facing errors remain sanitized, and tokens belong in
+neither output. Source development may use ordinary local debugging.
 
-See the [dedicated Windows runbook](../deployment/windows/README.md) for the
-commissioning and rollback procedure.
+See the [Pi quick guide](../deployment/raspberrypi/QUICK_COMMISSIONING.md).
+The [previous transport contract](archive/transport-deployment-contract-pre-network-pilot.md)
+is historical. Hardened offline bundles and broad release audits do not gate
+the current supervised research workflow.

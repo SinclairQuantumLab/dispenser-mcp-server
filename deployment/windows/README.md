@@ -1,3 +1,8 @@
+> Historical reference — retained for provenance, not an active deployment or
+> testing gate. Current source-checkout research instructions are in the
+> server README and deployment/raspberrypi/QUICK_COMMISSIONING.md. Legacy
+> settings, hardened bundles, and commands below may not match the current pilot.
+
 # Dedicated Windows Host Deployment
 
 > **Status:** Deferred pre-0.6 deployment reference. The launcher and PSD1

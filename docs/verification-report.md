@@ -1,3 +1,8 @@
+> Historical reference — retained for provenance, not an active deployment or
+> testing gate. Current source-checkout research instructions are in the
+> server README and deployment/raspberrypi/QUICK_COMMISSIONING.md. Legacy
+> settings, hardened bundles, and commands below may not match the current pilot.
+
 # Verification Report
 
 > **Current R&D startup note:** Package 0.6.1 loads three strict TOML settings

@@ -29,16 +29,10 @@ FIXED_SIGLENT_EXPECTED_MODEL = "SPD3303X"
 SiglentTopology = Literal["parallel_ch1"]
 SiglentConnection = Literal["gateway"]
 SiglentChannel = Literal["CH1"]
-McpTransport = Literal["stdio", "streamable-http"]
-HttpTrustMode = Literal[
-    "loopback_only",
-    "authenticated_ssh_tunnel",
-    "authenticated_reverse_proxy",
-]
 
 
 class ConfigurationError(ValueError):
-    """Report invalid operator startup configuration without local details."""
+    """Report invalid operator startup configuration without secret contents."""
 
 
 @dataclass(frozen=True)
@@ -93,18 +87,6 @@ class SourceLayout:
 
 
 @dataclass(frozen=True)
-class StreamableHttpSettings:
-    """Reviewed HTTP settings parsed from the main settings file."""
-
-    bind_host: str = "127.0.0.1"
-    port: int = 8000
-    path: str = "/mcp"
-    trust_mode: HttpTrustMode = "loopback_only"
-    allowed_hosts: tuple[str, ...] = ()
-    allowed_origins: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
 class McpStartupConfiguration:
     """MCP transport and deployment-specific safety settings."""
 
@@ -112,9 +94,9 @@ class McpStartupConfiguration:
     expected_serial_number: str
     compliance_voltage_v: float
     control_enabled: bool = False
-    transport: McpTransport = "stdio"
+    allow_remote_access: bool = False
+    port: int = 8000
     unloaded_hil_state_file: Path | None = None
-    streamable_http: StreamableHttpSettings | None = None
 
     @classmethod
     def from_toml(cls, layout: SourceLayout) -> McpStartupConfiguration:
@@ -129,9 +111,9 @@ class McpStartupConfiguration:
                 "expected_serial_number",
                 "compliance_voltage_v",
                 "control_enabled",
-                "transport",
+                "allow_remote_access",
+                "port",
                 "unloaded_hil_state_file",
-                "streamable_http",
             },
             "MCP settings",
         )
@@ -163,35 +145,24 @@ class McpStartupConfiguration:
         control_enabled = _boolean(
             document.get("control_enabled", False), name="control_enabled"
         )
-        transport = cast(
-            McpTransport,
-            _choice(
-                document.get("transport", "stdio"),
-                name="transport",
-                choices=("stdio", "streamable-http"),
-            ),
+        allow_remote_access = _boolean(
+            document.get("allow_remote_access", False), name="allow_remote_access"
+        )
+        port = _integer(
+            document.get("port", 8000), name="port", minimum=1024, maximum=65535
         )
         unloaded_hil_state_file = _unloaded_hil_state_file(
             document.get("unloaded_hil_state_file"),
             acceptance_context=acceptance_context,
         )
-        raw_http = document.get("streamable_http")
-        if transport == "stdio":
-            if raw_http is not None:
-                raise ConfigurationError(
-                    "streamable_http settings are invalid when transport is stdio."
-                )
-            http = None
-        else:
-            http = _streamable_http_settings(raw_http)
         return cls(
             acceptance_context=acceptance_context,
             expected_serial_number=expected_serial_number,
             compliance_voltage_v=compliance_voltage_v,
             control_enabled=control_enabled,
-            transport=transport,
+            allow_remote_access=allow_remote_access,
+            port=port,
             unloaded_hil_state_file=unloaded_hil_state_file,
-            streamable_http=http,
         )
 
 
@@ -289,7 +260,9 @@ class SiglentConfiguration:
         auth_file = layout.siglent_gateway_auth_file
         if auth_file.name != "gateway-auth.toml" or not auth_file.is_file():
             raise ConfigurationError(
-                "The operator-owned Siglent gateway authentication file is missing."
+                "The operator-owned Siglent gateway authentication file is missing. "
+                "Copy settings/py-siglent-spd3000/gateway-auth.toml.template to "
+                "settings/py-siglent-spd3000/gateway-auth.toml and fill it locally."
             )
         return cls(
             driver_src=driver_src.resolve(),
@@ -373,65 +346,6 @@ def _schema_version(document: Mapping[str, object], label: str) -> None:
         raise ConfigurationError(
             f"{label} schema_version must equal {SETTINGS_SCHEMA_VERSION}."
         )
-
-
-def _streamable_http_settings(raw_value: object) -> StreamableHttpSettings:
-    if raw_value is None:
-        document: Mapping[str, object] = {}
-    elif isinstance(raw_value, dict):
-        document = cast(dict[str, object], raw_value)
-    else:
-        raise ConfigurationError("streamable_http must be a TOML table.")
-    _closed_keys(
-        document,
-        {
-            "bind_host",
-            "port",
-            "path",
-            "trust_mode",
-            "allowed_hosts",
-            "allowed_origins",
-        },
-        "streamable_http",
-    )
-    return StreamableHttpSettings(
-        bind_host=_text(
-            document.get("bind_host", "127.0.0.1"),
-            name="streamable_http.bind_host",
-            maximum_length=253,
-        ),
-        port=_integer(
-            document.get("port", 8000),
-            name="streamable_http.port",
-            minimum=1024,
-            maximum=65535,
-        ),
-        path=_text(
-            document.get("path", "/mcp"),
-            name="streamable_http.path",
-            maximum_length=256,
-        ),
-        trust_mode=cast(
-            HttpTrustMode,
-            _choice(
-                document.get("trust_mode", "loopback_only"),
-                name="streamable_http.trust_mode",
-                choices=(
-                    "loopback_only",
-                    "authenticated_ssh_tunnel",
-                    "authenticated_reverse_proxy",
-                ),
-            ),
-        ),
-        allowed_hosts=_text_list(
-            document.get("allowed_hosts", []),
-            name="streamable_http.allowed_hosts",
-        ),
-        allowed_origins=_text_list(
-            document.get("allowed_origins", []),
-            name="streamable_http.allowed_origins",
-        ),
-    )
 
 
 def _unloaded_hil_state_file(
@@ -552,16 +466,6 @@ def _boolean(raw_value: object, *, name: str) -> bool:
     if type(raw_value) is not bool:
         raise ConfigurationError(f"{name} must be a TOML boolean.")
     return raw_value
-
-
-def _text_list(raw_value: object, *, name: str) -> tuple[str, ...]:
-    if not isinstance(raw_value, list):
-        raise ConfigurationError(f"{name} must be a TOML array of strings.")
-    raw_values = cast(list[object], raw_value)
-    values = tuple(_text(value, name=name, maximum_length=512) for value in raw_values)
-    if len(set(values)) != len(values):
-        raise ConfigurationError(f"{name} contains a duplicate value.")
-    return values
 
 
 def _require_resolution(value: float, *, resolution: float, name: str) -> None:
