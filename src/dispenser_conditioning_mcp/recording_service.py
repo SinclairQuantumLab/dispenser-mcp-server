@@ -111,7 +111,7 @@ class RecordingService:
         self, recorder: SessionRecorder | None = None, *, directory: Path | None = None
     ) -> None:
         self.completion_recorded = False
-        self.directory = directory or new_run_directory("live")
+        self.directory = directory or new_run_directory("hardware")
         self.session_id = str(uuid4())
         self.recorder = recorder
         self.observation_ids: set[str] = set()

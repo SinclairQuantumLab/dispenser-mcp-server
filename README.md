@@ -168,7 +168,7 @@ See [the exact context/recording contract](docs/session-recording-contract.md).
 
 Both entrypoints share the MCP checkout’s [run directory](runs/README.md);
 simulator defaults use the `_simulation_` label. One process creates one run.
-The server records raw JSONL and CSVs under `runs/<UTC-date-time>_live_<8hex>/`. Open
+The server records raw JSONL and CSVs under `runs/<UTC-date-time>_hardware_<8hex>/`. Open
 `http://<server-IP>:8000/dashboard` for observations, control attempts/results,
 and declared rationale. A prominent source-mode strip distinguishes simulation,
 live-hardware records, and unknown/fixture data. Short record numbers link chart

@@ -1,7 +1,7 @@
 # Conditioning runs
 
 Both hardware and simulator MCP entrypoints default to one flat directory per
-process: `YYYY-MM-DDTHH-MM-SSZ_live_<8hex>/` or
+process: `YYYY-MM-DDTHH-MM-SSZ_hardware_<8hex>/` or
 `YYYY-MM-DDTHH-MM-SSZ_simulation_<8hex>/`. The timestamp is UTC; the random suffix
 separates starts in the same second. Directory names do not replace session IDs.
 Runtime run folders are ignored by Git. Existing historical files are not moved

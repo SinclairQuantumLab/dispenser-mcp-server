@@ -133,7 +133,7 @@
 ## MCP-owned session records
 
 - Default hardware and simulator MCP records to this checkout’s `runs/` through
-  the shared run-directory helper: UTC timestamp, live/simulation label, unique
+  the shared run-directory helper: UTC timestamp, hardware/simulation label, unique
   suffix. Keep each run flat and preserve explicit simulator path overrides.
   One process remains one run; do not add a lifecycle orchestrator or move
   historical records automatically. Track only the central runs/README.md.

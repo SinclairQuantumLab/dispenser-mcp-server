@@ -107,7 +107,7 @@ folder name does not change session IDs or result schemas. See
 overrides remain supported; existing historical records are not moved automatically.
 
 Both MCP entrypoints use the shared `new_run_directory` helper. Each process
-creates a flat `runs/YYYY-MM-DDTHH-MM-SSZ_<live|simulation>_<8hex>/` directory inside
+creates a flat `runs/YYYY-MM-DDTHH-MM-SSZ_<hardware|simulation>_<8hex>/` directory inside
 this source checkout. It contains `metadata.json`, canonical append-only
 `events.jsonl`, and derived `observations.csv`, `controls.csv`, `decisions.csv`.
 The raw record preserves submitted context and semantic request/results;
