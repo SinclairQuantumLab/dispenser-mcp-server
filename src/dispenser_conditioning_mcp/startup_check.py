@@ -1,7 +1,6 @@
-"""CLI-only best-effort connection reads, without instrument mutations."""
+"""CLI-only fail-fast connection reads, without instrument mutations."""
 
 import sys
-import traceback
 from collections.abc import Callable
 
 from dispenser_conditioning_mcp.domain import (
@@ -9,20 +8,6 @@ from dispenser_conditioning_mcp.domain import (
     normalize_observation,
 )
 from dispenser_conditioning_mcp.power_domain import PowerController
-
-
-def _failure(error: BaseException) -> str:
-    """Expose causal classes/locations, never messages or traceback local values."""
-    parts: list[str] = []
-    seen: set[int] = set()
-    cause: BaseException | None = error
-    while cause is not None and id(cause) not in seen:
-        seen.add(id(cause))
-        frames = traceback.extract_tb(cause.__traceback__)
-        location = f" at {frames[-1].name}:{frames[-1].lineno}" if frames else ""
-        parts.append(type(cause).__name__ + location)
-        cause = cause.__cause__ or cause.__context__
-    return " <- ".join(parts)
 
 
 def check_connections(
@@ -45,8 +30,9 @@ def check_connections(
     for name, read in checks:
         try:
             print(f"Startup read PASS [{name}] {read()}", file=sys.stderr)
-        except Exception as error:
+        except Exception:
             print(
-                f"Startup read FAIL [{name}] {_failure(error)}; continuing HTTP startup",
+                f"Startup read FAIL [{name}]; aborting HTTP startup",
                 file=sys.stderr,
             )
+            raise

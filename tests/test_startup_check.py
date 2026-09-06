@@ -11,7 +11,7 @@ from dispenser_conditioning_mcp.startup_check import check_connections
 
 
 @pytest.mark.parametrize("failure", [None, "G1", "PSU"])
-def test_reads_only_attempt_both_and_hide_exception_values(failure, capsys):
+def test_reads_fail_fast_preserve_cause(failure, capsys):
     pressure = Mock(spec=["read"])
     power = Mock(spec=["read_state"])
     pressure.read.return_value = RawPressureObservation(
@@ -27,19 +27,27 @@ def test_reads_only_attempt_both_and_hide_exception_values(failure, capsys):
     )
     if failure:
         try:
-            raise ValueError("secret-fixture-token")
+            raise ValueError("fixture cause")
         except ValueError as cause:
-            error = RuntimeError("wrapped-secret")
+            error = RuntimeError("fixture wrapper")
             error.__cause__ = cause
         (pressure.read if failure == "G1" else power.read_state).side_effect = error
-    check_connections(pressure, power)
-    pressure.read.assert_called_once_with()
-    power.read_state.assert_called_once_with()
-    output = capsys.readouterr().err
-    assert "secret" not in output
     if failure:
-        assert f"FAIL [{failure}]" in output and "ValueError" in output
-        assert "continuing HTTP startup" in output
+        with pytest.raises(RuntimeError) as caught:
+            check_connections(pressure, power)
+        assert caught.value is error
+        assert isinstance(caught.value.__cause__, ValueError)
+    else:
+        check_connections(pressure, power)
+    pressure.read.assert_called_once_with()
+    if failure == "G1":
+        power.read_state.assert_not_called()
+    else:
+        power.read_state.assert_called_once_with()
+    output = capsys.readouterr().err
+    if failure:
+        assert f"FAIL [{failure}]" in output
+        assert "aborting HTTP startup" in output
     else:
         assert "G1=1.33e-07 mbar" in output and "output=OFF" in output
 
@@ -71,9 +79,10 @@ def test_only_explicit_hardware_construction_reads(monkeypatch):
     )
     assert app.create_configured_server(config) == "server"
     pressure.read.assert_not_called()
-    assert app.create_configured_server(config, check_hardware=True) == "server"
+    with pytest.raises(OSError):
+        app.create_configured_server(config, check_hardware=True)
     pressure.read.assert_called_once()
-    power.read_state.assert_called_once()
+    power.read_state.assert_not_called()
 
 
 def test_simulation_skips_hardware_checks(tmp_path, monkeypatch):
@@ -91,3 +100,37 @@ def test_simulation_skips_hardware_checks(tmp_path, monkeypatch):
         SimpleNamespace(mcp_settings_file=settings), check_hardware=True
     )
     assert server == "sim"
+
+
+def test_cli_failure_does_not_start_listener(monkeypatch):
+    failure = RuntimeError("fixture")
+    monkeypatch.setattr(__main__, "create_startup_server", Mock(side_effect=failure))
+    listener = Mock()
+    monkeypatch.setattr(__main__, "run_configured_transport", listener)
+    with pytest.raises(RuntimeError) as caught:
+        __main__.main()
+    assert caught.value is failure
+    listener.assert_not_called()
+
+
+def test_factory_closes_device_if_wrapper_setup_fails(monkeypatch):
+    from dispenser_conditioning_mcp import siglent
+
+    device = Mock(spec=["close"])
+    module = SimpleNamespace(
+        load_gateway_auth=lambda *a, **kw: "fixture",
+        SPD3000=SimpleNamespace(connect=lambda *a, **kw: device),
+    )
+    monkeypatch.setattr(siglent, "_load_driver_module", lambda path: module)
+    config = SimpleNamespace(
+        driver_src=None,
+        timeout_s=1,
+        min_command_interval_ms=1,
+        gateway_auth_file=None,
+        connection="gateway",
+        identifier="fixture",
+        channel="CH1",
+    )
+    with pytest.raises(AttributeError):
+        siglent.SiglentDriverSessionFactory(config)()
+    device.close.assert_called_once_with()

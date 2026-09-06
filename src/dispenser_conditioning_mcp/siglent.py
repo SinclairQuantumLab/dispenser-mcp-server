@@ -183,7 +183,11 @@ class SiglentDriverSessionFactory:
             self._configuration.identifier,
             **options,
         )
-        return SiglentDriverSession(device, self._configuration.channel)
+        try:
+            return SiglentDriverSession(device, self._configuration.channel)
+        except Exception:
+            _close_quietly(device)
+            raise
 
 
 class DispenserPowerController:

@@ -133,9 +133,9 @@
 ## MCP-owned session records
 
 - Hardware CLI startup performs one read-only G1 and PSU check before listening;
-  attempt both and continue after read failures. Keep construction/offline checks
-  and simulation free of these reads. Operator failure output may show causal
-  exception classes/code locations, never credentials or arbitrary exception messages.
+  stop on the first failure and propagate its original chained exception. Keep construction/offline checks
+  and simulation free of these reads. Operator diagnostics use ordinary tracebacks without local-variable/config dumps;
+  never print credentials. Close connections on failure, never actuate as cleanup.
 
 - Default hardware and simulator MCP records to this checkout’s `runs/` through
   the shared run-directory helper: UTC timestamp, hardware/simulation label, unique

@@ -71,8 +71,8 @@ uv run dispenser-conditioning-mcp
 ```
 
 Normal hardware CLI startup reads G1 and PSU once, printing PASS with pressure or
-PSU identity/output/current, or FAIL with causal exception classes and code locations.
-Both checks are attempted; read failures do not prevent the HTTP listener starting.
+PSU identity/output/current, or FAIL followed by the ordinary chained exception traceback.
+The first failed read aborts startup; the HTTP listener does not start.
 No output/settings writes occur. Simulation startup and ordinary application
 construction do not run these checks. These startup diagnostics are not run records.
 
