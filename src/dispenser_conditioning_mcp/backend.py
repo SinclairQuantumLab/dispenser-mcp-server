@@ -17,6 +17,8 @@ from dispenser_conditioning_mcp.transport import McpTransportConfiguration
 
 def create_startup_server(
     layout: SourceLayout | None = None,
+    *,
+    check_hardware: bool = False,
 ) -> tuple[MCPServer[None], McpTransportConfiguration]:
     layout = layout or SourceLayout.discover()
     try:
@@ -31,7 +33,7 @@ def create_startup_server(
 
         operator = OperatorConfiguration.from_toml(layout)
         return create_configured_server(
-            operator
+            operator, check_hardware=check_hardware
         ), McpTransportConfiguration.from_settings(operator.startup)
     if backend != "simulation":
         raise ConfigurationError("backend must be hardware or simulation")

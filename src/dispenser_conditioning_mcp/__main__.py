@@ -21,7 +21,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     try:
-        mcp, transport_configuration = create_startup_server()
+        mcp, transport_configuration = create_startup_server(check_hardware=True)
     except ConfigurationError as error:
         print(f"Configuration error: {error}", file=sys.stderr)
         raise SystemExit(2) from error
