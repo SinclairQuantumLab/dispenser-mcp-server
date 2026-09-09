@@ -567,35 +567,57 @@ for(const id of Object.keys(chartStates)) {
 }
 
 let runManagement = {};
+let managementBusy = false;
 const collection = el("run-collection");
 collection.value = new URLSearchParams(location.search).get("archived") === "true" ? "archived" : "active";
 function updateManagement() {
-  el("rename-run").disabled = !operatorAuthorized;
-  el("restore-run").disabled = !operatorAuthorized;
-  el("archive-run").disabled = !operatorAuthorized || !runManagement.name || !!runManagement.current;
+  el("rename-run").disabled = managementBusy || !operatorAuthorized;
+  el("restore-run").disabled = managementBusy || !operatorAuthorized;
+  el("archive-run").disabled = managementBusy || !operatorAuthorized || !runManagement.name || !!runManagement.current;
   el("archive-run").hidden = !!runManagement.archived;
   el("restore-run").hidden = !runManagement.archived;
   el("delete-run").hidden = !runManagement.archived;
-  el("delete-run").disabled = !operatorAuthorized || !!runManagement.current;
+  el("delete-run").disabled = managementBusy || !operatorAuthorized || !!runManagement.current;
 }
-async function manageRun(operation) {
-  const body = {run:selectedRun};
-  if (operation === "rename") {
-    body.display_name = prompt("Display name (raw folder and record IDs stay unchanged):",runManagement.display_name || "");
-    if (body.display_name === null) return;
-  } else if (operation === "delete") {
-    body.confirmation = prompt(`Permanently delete this archived run, including ALL records, CSVs and simulator observer files? This cannot be undone. Type the exact folder name:\n${runManagement.name}`);
-    if (body.confirmation === null) return;
+async function manageRun(operation, input = null) {
+  if(managementBusy) return;
+  if ((operation === "rename" || operation === "delete") && input === null) {
+    const deleting=operation === "delete";
+    el("management-editor").hidden=false;
+    el("management-editor").dataset.operation=operation;
+    el("management-label").textContent=deleting ? `Permanently delete ALL run files, including observer files? This cannot be undone. Type folder name: ${runManagement.name}` : "New display name (raw folder and record IDs stay unchanged)";
+    el("management-input").value=deleting ? "" : runManagement.display_name || "";
+    el("management-input").maxLength=deleting ? 255 : 120;
+    el("management-submit").textContent=deleting ? "Permanently delete" : "Save name";
+    el("management-input").focus();return;
   }
+  const body = {run:selectedRun};
+  if(operation === "rename") body.display_name=input;
+  if(operation === "delete") body.confirmation=input;
+  managementBusy=true;updateManagement();
+  el("management-status").textContent=`Sending ${operation} request…`;
+  el("management-status").className="muted";
   try {
-    const response = await fetch(`/api/runs/${operation}`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Run action rejected");
+    const response = await fetch(`/api/runs/${operation}`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});
+    let result;
+    try {result=await response.json();} catch {throw new Error(`HTTP ${response.status}: invalid dashboard response`);}
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${result.error || "Run action rejected"}`);
     if (result.deleted) {window.location.assign("/dashboard");return;}
-    Object.assign(runManagement,result);updateManagement();await refreshRuns();
-    el("run-help").textContent = "Run display updated. Raw records, recording and equipment are unchanged.";
-  } catch(error) {el("run-help").textContent = error.message;}
+    Object.assign(runManagement,result);el("management-editor").hidden=true;
+    if(operation === "archive" || operation === "restore") {
+      collection.value=result.archived ? "archived" : "active";
+      const url=new URL(location.href);url.searchParams.set("archived",String(result.archived));history.replaceState(null,"",url);
+    }
+    if(result.display_name) el("title").textContent=result.display_name;
+    updateManagement();await refreshRuns();
+    el("management-status").textContent=`${operation} completed. Raw records and equipment are unchanged.`;
+  } catch(error) {
+    el("management-status").className="error";
+    el("management-status").textContent=error.name === "TimeoutError" || error.name === "AbortError" ? "Run update timed out; outcome unknown. Refresh the run list before retrying." : `Run update failed: ${error.message}`;
+  } finally {managementBusy=false;updateManagement();}
 }
+el("management-editor").addEventListener("submit",event=>{event.preventDefault();manageRun(el("management-editor").dataset.operation,el("management-input").value);});
+el("management-cancel").addEventListener("click",()=>{el("management-editor").hidden=true;});
 for (const operation of ["rename","archive","restore","delete"]) el(operation+"-run").addEventListener("click",()=>manageRun(operation));
 collection.addEventListener("change",refreshRuns);
 async function refreshRuns() {
@@ -619,6 +641,7 @@ async function refreshRuns() {
   } catch (error) { el("run-help").textContent = error.message + ". Current view is unchanged."; }
 }
 el("run-picker").addEventListener("change", event => {
+  el("management-editor").hidden=true;
   const url = new URL(window.location.href);
   url.searchParams.set("archived",String(collection.value === "archived"));
   if (event.target.value) url.searchParams.set("run",event.target.value);

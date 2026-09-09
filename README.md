@@ -582,6 +582,10 @@ labelled hindsight, not a contemporaneous public instrument observation.
 
 In the authenticated dashboard, choose **Main list** or **Archive** at any time.
 Rename changes only a display label. Archive/restore changes only list membership.
+Rename and delete confirmation use an inline form rather than native browser dialogs.
+Management requests show progress and persistent success/error feedback; archive/restore
+switches the visible list accordingly. A timeout leaves the outcome unknown: refresh
+the list before retrying. Older saved folders need no pre-existing run-management file.
 These values live in `run-management.json`; directory names, IDs, raw JSONL and
 CSVs remain unchanged. The current process run cannot be archived or deleted.
 **Permanently delete** requires an archived saved run and exact folder-name
