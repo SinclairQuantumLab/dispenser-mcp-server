@@ -1,2 +1,4 @@
 # Operator-owned settings, including nested instrument directories.
 *.toml
+*.toml.hardware
+*.toml.simulation
