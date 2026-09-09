@@ -235,8 +235,11 @@ The server never changes tracking mode. It requires live `parallel` mode before
 prepare, enable, or current change. A requested load-current limit is divided
 by two before the native CH1 current setpoint is written. The returned
 `commanded_load_current_limit_a` is therefore a command interpretation, **not a
-measured load current**. Only the native CH1 current measurement is returned;
-parallel load-current measurement semantics remain hardware-unverified.
+measured load current**. CH1 and CH2 current/voltage are queried sequentially in
+one batch, not simultaneously. `measured_parallel_load_current_a` sums the two
+finite measured currents only when the queried mode is parallel; otherwise it is
+null. Voltages remain separate. Simulation uses explicitly labelled symmetric
+model channels. The CH1-only no-load current check is unchanged.
 
 Every target is bounded by the operator cap, software maximum 6.4 A and the
 topology hardware ceiling. Under `parallel_ch1`, every

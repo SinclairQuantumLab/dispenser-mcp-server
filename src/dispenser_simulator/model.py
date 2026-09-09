@@ -627,6 +627,20 @@ class SimulatedDispenser:
             "commanded_load_current_limit_a": commanded_load_current,
             "native_voltage_measurement_v": measured_voltage,
             "native_current_measurement_a": measured_current,
+            # Symmetric synthetic channels; no independent hardware measurement.
+            "measured_ch2_current_a": measured_current
+            if math.isfinite(measured_current)
+            else None,
+            "measured_ch2_voltage_v": measured_voltage
+            if math.isfinite(measured_voltage)
+            else None,
+            "measurement_acquisition": "synthetic_symmetric_model",
+            "measured_parallel_load_current_a": (
+                measured_current + measured_current
+                if self.state.live_mode == "parallel"
+                and math.isfinite(measured_current)
+                else None
+            ),
             "native_power_measurement_w": measured_voltage * measured_current,
             "output_enabled": self.state.ch1_output_on,
             "regulation_mode": (

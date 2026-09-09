@@ -40,6 +40,7 @@ class FakeDevice:
         self.current_setpoint_a = 0.0
         self.measured_voltage_v = 9.9
         self.measured_current_a = 0.0
+        self.measured_ch2_current_a = 0.0
         self.measured_power_w: float | None = 0.0
         self.output_enabled = False
         self.ch2_output_enabled = False
@@ -72,6 +73,8 @@ class FakeSession:
             current_setpoint_a=self.device.current_setpoint_a,
             measured_voltage_v=self.device.measured_voltage_v,
             measured_current_a=self.device.measured_current_a,
+            measured_ch2_current_a=self.device.measured_ch2_current_a,
+            measured_ch2_voltage_v=9.8,
             measured_power_w=self.device.measured_power_w,
             output_enabled=self.device.output_enabled,
             regulation_mode=self.device.regulation_mode,
@@ -432,6 +435,8 @@ def test_driver_adapter_collects_state_snapshot_in_one_semantic_batch() -> None:
         "query_measured_voltage:CH1",
         "query_measured_current:CH1",
         "query_measured_power:CH1",
+        "query_measured_voltage:CH2",
+        "query_measured_current:CH2",
         "batch_exit",
     ]
 
@@ -442,6 +447,7 @@ def test_parallel_state_exposes_native_measurement_without_synthesizing_load(
     device = FakeDevice()
     device.current_setpoint_a = 0.1
     device.measured_current_a = 0.08
+    device.measured_ch2_current_a = 0.07
     control, _factory = controller(tmp_path, device)
 
     state = control.read_state()
@@ -450,6 +456,9 @@ def test_parallel_state_exposes_native_measurement_without_synthesizing_load(
     assert state.load_current_factor == 2
     assert state.commanded_load_current_limit_a == 0.2
     assert state.measured_native_channel_current_a == 0.08
+    assert state.measured_ch2_current_a == 0.07
+    assert state.measured_ch2_voltage_v == 9.8
+    assert state.measured_parallel_load_current_a == pytest.approx(0.15)
     assert "measured_load_current_a" not in state.model_dump()
     assert state.expected_operating_mode == "parallel"
     assert state.driver_hardware_validation_status == (
@@ -461,11 +470,16 @@ def test_parallel_state_exposes_native_measurement_without_synthesizing_load(
     assert state.mcp_actuation_validation_status == (
         "not_yet_validated_with_connected_dispenser"
     )
-    assert state.safety_limits.deployment_native_current_ceiling_a == 2.4
-    assert state.safety_limits.deployment_commanded_load_current_ceiling_a == 4.8
+    assert state.safety_limits.deployment_native_current_ceiling_a == 3.2
+    assert state.safety_limits.deployment_commanded_load_current_ceiling_a == 6.4
     assert state.safety_limits.acceptance_context == "production_dispenser"
     assert state.safety_limits.required_enable_confirmation == "confirmed_parallel_ch1"
     assert device.events == ["read_identity", "read_state", "close"]
+    device.operating_mode = "independent"
+    assert control.read_state().measured_parallel_load_current_a is None
+    device.operating_mode = "parallel"
+    device.measured_ch2_current_a = float("nan")
+    assert control.read_state().measured_parallel_load_current_a is None
 
 
 def test_control_disabled_denies_before_opening_session(tmp_path: Path) -> None:

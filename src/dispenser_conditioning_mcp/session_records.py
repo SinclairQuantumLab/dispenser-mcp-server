@@ -41,6 +41,9 @@ HEADERS = {
         "commanded_load_current_limit_a",
         "native_ch1_current_setpoint_a",
         "native_ch1_measured_current_a",
+        "measured_ch2_current_a",
+        "measured_ch2_voltage_v",
+        "measured_parallel_load_current_a",
         "native_ch1_voltage_setpoint_v",
         "native_ch1_measured_voltage_v",
         "native_ch1_measured_power_w",
@@ -59,6 +62,9 @@ HEADERS = {
         "expected_load_current_a",
         "confirmed_load_current_limit_a",
         "native_ch1_measured_current_a",
+        "measured_ch2_current_a",
+        "measured_ch2_voltage_v",
+        "measured_parallel_load_current_a",
         "output_enabled",
         "error",
         "arguments_json",
@@ -140,6 +146,14 @@ def projections(event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
             state, "measured_native_channel_current_a", "native_current_measurement_a"
         )
     )
+    channel_measurements = {
+        key: number(state.get(key))
+        for key in (
+            "measured_ch2_current_a",
+            "measured_ch2_voltage_v",
+            "measured_parallel_load_current_a",
+        )
+    }
     if kind == "decision":
         usage = as_dict(as_dict(payload.get("action_context")).get("token_usage"))
         rows.append(
@@ -200,6 +214,7 @@ def projections(event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
                     if status == "succeeded"
                     else None,
                     "native_ch1_measured_current_a": measured_a,
+                    **channel_measurements,
                     "output_enabled": state.get("output_enabled"),
                     "error": payload.get("error_message")
                     or (error_text(result) if result_failed(result) else None),
@@ -230,6 +245,7 @@ def projections(event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
                             state.get("native_current_setpoint_a")
                         ),
                         "native_ch1_measured_current_a": measured_a,
+                        **channel_measurements,
                         "native_ch1_voltage_setpoint_v": number(
                             state.get("native_voltage_setpoint_v")
                         ),

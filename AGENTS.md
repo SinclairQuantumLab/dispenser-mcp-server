@@ -42,7 +42,9 @@
 - Never change tracking mode. Verify the live mode before preparing, enabling,
   or changing current. Identity mismatch must cause zero writes.
 - Treat `parallel_ch1` current as a commanded load-current limit derived from
-  twice the CH1 native setpoint. Never synthesize a parallel load measurement.
+  twice the CH1 native setpoint. Measured parallel current sums separately queried
+  finite CH1 and CH2 currents only in verified parallel mode, never twice CH1.
+  Queries are sequential, not simultaneous; simulated channels assume symmetry.
 - For this deployment, enforce a 3.2 A native CH1 ceiling, a 6.4 A commanded
   load-current ceiling, and an exact 0.1 A native/0.2 A load-current upward step.
 - For the `production_dispenser` acceptance context, require fresh human

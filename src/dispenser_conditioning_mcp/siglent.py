@@ -80,7 +80,7 @@ class SiglentDriverSession:
 
     def read_channel_state(self) -> RawChannelState:
         @self._device.batch
-        def read_snapshot() -> tuple[Any, Any, Any, Any, Any, Any]:
+        def read_snapshot() -> tuple[Any, ...]:
             return (
                 self._device.system.status,
                 self._channel.voltage,
@@ -92,6 +92,8 @@ class SiglentDriverSession:
                     if bool(self._device.capabilities.measure_power)
                     else None
                 ),
+                self._device.measure.voltage("CH2"),
+                self._device.measure.current("CH2"),
             )
 
         (
@@ -101,6 +103,8 @@ class SiglentDriverSession:
             measured_voltage_v,
             measured_current_a,
             measured_power_w,
+            measured_ch2_voltage_v,
+            measured_ch2_current_a,
         ) = read_snapshot()
         channel_status = getattr(status, self._channel_name.lower())
         return RawChannelState(
@@ -109,6 +113,8 @@ class SiglentDriverSession:
             current_setpoint_a=float(current_setpoint_a),
             measured_voltage_v=float(measured_voltage_v),
             measured_current_a=float(measured_current_a),
+            measured_ch2_voltage_v=float(measured_ch2_voltage_v),
+            measured_ch2_current_a=float(measured_ch2_current_a),
             measured_power_w=(
                 None if measured_power_w is None else float(measured_power_w)
             ),
@@ -764,6 +770,26 @@ class DispenserPowerController:
             commanded_load_current_limit_a=(raw.current_setpoint_a * load_factor),
             measured_native_channel_voltage_v=raw.measured_voltage_v,
             measured_native_channel_current_a=raw.measured_current_a,
+            measured_ch2_voltage_v=(
+                raw.measured_ch2_voltage_v
+                if raw.measured_ch2_voltage_v is not None
+                and math.isfinite(raw.measured_ch2_voltage_v)
+                else None
+            ),
+            measured_ch2_current_a=(
+                raw.measured_ch2_current_a
+                if raw.measured_ch2_current_a is not None
+                and math.isfinite(raw.measured_ch2_current_a)
+                else None
+            ),
+            measured_parallel_load_current_a=(
+                raw.measured_current_a + raw.measured_ch2_current_a
+                if topology_matches
+                and raw.measured_ch2_current_a is not None
+                and math.isfinite(raw.measured_current_a)
+                and math.isfinite(raw.measured_ch2_current_a)
+                else None
+            ),
             measured_native_channel_power_w=raw.measured_power_w,
             output_enabled=raw.output_enabled,
             regulation_mode=raw.regulation_mode,

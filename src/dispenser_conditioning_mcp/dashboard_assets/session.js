@@ -233,11 +233,14 @@ function selectEvent(id, jump = false) {
   for (const basis of supportingIds) links.append(eventButton(basis, "Supporting observation " + shortId(basis), false));
   readable.append(links);
   const row = observations.find(r => r.event_id === id);
-  if (row) readable.append(text("p", Object.entries(row).filter(([key,value]) => value !== null && ["pressure_mbar","commanded_load_current_limit_a","native_ch1_measured_current_a","native_ch1_measured_voltage_v","output_enabled"].includes(key)).map(([key,value]) => ({
+  if (row) readable.append(text("p", Object.entries(row).filter(([key,value]) => value !== null && ["pressure_mbar","commanded_load_current_limit_a","native_ch1_measured_current_a","native_ch1_measured_voltage_v","measured_ch2_current_a","measured_ch2_voltage_v","measured_parallel_load_current_a","output_enabled"].includes(key)).map(([key,value]) => ({
 pressure_mbar: "Total pressure: " + Number(value).toExponential(3) + " mbar",
 commanded_load_current_limit_a: "Returned load-current setting: " + value + " A",
 native_ch1_measured_current_a: "Measured CH1 current: " + value + " A",
 native_ch1_measured_voltage_v: "Measured CH1 voltage: " + value + " V",
+measured_ch2_current_a: "Measured CH2 current: " + value + " A",
+measured_ch2_voltage_v: "Measured CH2 voltage: " + value + " V",
+measured_parallel_load_current_a: "Measured combined current (CH1 + CH2): " + value + " A",
 output_enabled: "Output: " + (value ? "ON" : "OFF")
 })[key]).join(" · ")));
   el("raw").textContent = JSON.stringify(event, null, 2);
@@ -315,7 +318,7 @@ function updatePanels() {
   const power = observations.filter(r => r.observation_kind === "power").at(-1);
   el("pressure").textContent = p ? `${p.pressure_mbar.toExponential(3)} mbar` : "—";
   el("set").textContent = power ? `${fmt(power.commanded_load_current_limit_a)} A` : "—";
-  el("actual").textContent = power ? `${fmt(power.native_ch1_measured_current_a)} A` : "—";
+  el("actual").textContent = power ? `${fmt(power.measured_parallel_load_current_a)} A` : "—";
   el("output").textContent = power?.output_enabled === true ? "ON" : power?.output_enabled === false ? "OFF" : "—";
   el("decisions").replaceChildren();
   for (const row of [...decisions].reverse()) {
@@ -356,6 +359,8 @@ async function draw() {
     trace("pressure_mbar", "Observed total pressure · mbar", "#e1c77c", 1, r => r.observation_kind === "pressure"),
     trace("commanded_load_current_limit_a", "Returned commanded load limit · A", "#8cafe2", 2, r => r.observation_kind === "power"),
     trace("native_ch1_measured_current_a", "Measured native CH1 · A", "#6edbc9", 2, r => r.observation_kind === "power"),
+    trace("measured_ch2_current_a", "Measured CH2 · A", "#a8d98c", 2, r => r.observation_kind === "power"),
+    trace("measured_parallel_load_current_a", "Measured CH1 + CH2 · A", "#ffc875", 2, r => r.observation_kind === "power"),
   ];
   const requested = controls.filter(r => r.phase === "call_intent" && xFor(r) !== null && num(r.requested_load_current_a) !== null);
   traces.push({ type: "scatter", mode: "markers", name: "Requested load target · A", x: requested.map(xFor), y: requested.map(r => r.requested_load_current_a), xaxis: "x2", yaxis: "y2", marker: { color: "#efbc72", symbol: "diamond-open", size: 9 }, customdata: requested.map(r => r.event_id), text: requested.map(r => shortId(r.event_id)), hovertemplate: "%{text}<br>Requested load: %{y} A<extra></extra>" });
@@ -405,7 +410,7 @@ async function draw() {
 }
 async function drawVoltage() {
   const rows=observations.filter(r=>r.observation_kind==="power"&&xFor(r)!==null);
-  const traces=[["native_ch1_voltage_setpoint_v","Native CH1 voltage limit · V","#c7a4e9"],["native_ch1_measured_voltage_v","Measured native CH1 voltage · V","#80c8e5"]].map(([field,name,color])=>({
+  const traces=[["native_ch1_voltage_setpoint_v","Native CH1 voltage limit · V","#c7a4e9"],["native_ch1_measured_voltage_v","Measured native CH1 voltage · V","#80c8e5"],["measured_ch2_voltage_v","Measured CH2 voltage · V","#a8d98c"]].map(([field,name,color])=>({
     type:"scatter",mode:"lines+markers",name,x:rows.map(xFor),y:rows.map(r=>num(r[field])),line:{color,width:2,shape:field.includes("setpoint")?"hv":"linear"},marker:{size:4},connectgaps:false,
     customdata:rows.map(r=>r.event_id),text:rows.map(r=>shortId(r.event_id)+"<br>"+(sharedView.wall?xFor(r):elapsedDetail(xFor(r)))),
     hovertemplate:"%{text}<br>%{y} V<extra>"+name+"</extra>"}));

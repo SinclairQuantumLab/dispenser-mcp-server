@@ -94,6 +94,8 @@ class RawChannelState:
     measured_power_w: float | None
     output_enabled: bool
     regulation_mode: str
+    measured_ch2_voltage_v: float | None = None
+    measured_ch2_current_a: float | None = None
 
 
 class PowerSupplySession(Protocol):
@@ -365,6 +367,12 @@ class DispenserPowerState(BaseModel):
     measured_native_channel_voltage_v: float
     measured_native_channel_current_a: float
     measured_native_channel_power_w: float | None
+    measured_ch2_voltage_v: float | None
+    measured_ch2_current_a: float | None
+    measured_parallel_load_current_a: float | None
+    measurement_acquisition: Literal["sequential_channel_queries"] = (
+        "sequential_channel_queries"
+    )
     output_enabled: bool
     regulation_mode: str
     compliance_voltage_matches: bool
