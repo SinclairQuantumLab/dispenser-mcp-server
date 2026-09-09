@@ -67,6 +67,7 @@ class DashboardAccess:
         return guarded
 
     async def login(self, request: Request) -> Response:
+        inline = request.headers.get("accept") == "application/json"
         selection = urlencode(
             {
                 key: request.query_params[key]
@@ -103,12 +104,22 @@ class DashboardAccess:
             )
             if not hmac.compare_digest(supplied.encode(), self.token.encode()):
                 self.failed_logins.append(time.monotonic())
+                if inline:
+                    return JSONResponse(
+                        {"error": "Invalid access phrase."},
+                        status_code=401,
+                        headers={"Cache-Control": "no-store"},
+                    )
                 return HTMLResponse(
                     self.login_page("Invalid access phrase.", suffix),
                     status_code=401,
                     headers={"Cache-Control": "no-store"},
                 )
-            response = RedirectResponse("/dashboard" + suffix, status_code=303)
+            response = (
+                JSONResponse({"authorized": True})
+                if inline
+                else RedirectResponse("/dashboard" + suffix, status_code=303)
+            )
             # The API and assets share the origin at different paths. Only the
             # dashboard route guards interpret this cookie; MCP ignores it.
             response.set_cookie(
@@ -132,7 +143,7 @@ class DashboardAccess:
             + escape(message)
             + '</p><form method="post" action="/dashboard/login'
             + escape(suffix, quote=True)
-            + '"><label>Access phrase <input name="code" type="password" required autocomplete="off"></label><button>Open dashboard</button></form></html>'
+            + '"><label>Access phrase <input name="code" type="text" required autocomplete="off" spellcheck="false" maxlength="256"></label><button>Open dashboard</button></form></html>'
         )
 
     async def operator(self, request: Request) -> Response:

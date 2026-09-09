@@ -15,6 +15,40 @@ from dispenser_conditioning_mcp.transport import (
 
 
 @pytest.mark.anyio
+async def test_inline_login_reuses_cookie_validation_and_throttle(tmp_path):
+    access = DashboardAccess()
+    app = Starlette(routes=dashboard_routes(tmp_path, access=access))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, client=("192.0.2.5", 1)),
+        base_url="http://fixture",
+    ) as client:
+        assert (await client.get("/inline-login.js")).status_code == 200
+        page = (await client.get("/dashboard")).text
+        assert 'id="inline-phrase" name="code" type="text"' in page
+        assert access.token not in page
+        headers = {"Accept": "application/json"}
+        failed = await client.post(
+            "/dashboard/login", headers=headers, data={"code": "wrong"}
+        )
+        assert failed.status_code == 401 and failed.json()["error"]
+        success = await client.post(
+            "/dashboard/login", headers=headers, data={"code": access.token}
+        )
+        assert success.status_code == 200 and success.json() == {"authorized": True}
+        assert "location" not in success.headers
+        assert "HttpOnly" in success.headers["set-cookie"]
+        assert (await client.get("/api/session")).json()["operator_authorized"] is True
+        for _ in range(4):
+            await client.post(
+                "/dashboard/login", headers=headers, data={"code": "wrong"}
+            )
+        limited = await client.post(
+            "/dashboard/login", headers=headers, data={"code": "wrong"}
+        )
+        assert limited.status_code == 429 and "retry-after" in limited.headers
+
+
+@pytest.mark.anyio
 async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path):
     access = DashboardAccess()
     assert re.fullmatch(r"[a-z]+-[a-z]+-\d{2}", access.token)

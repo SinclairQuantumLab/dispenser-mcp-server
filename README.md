@@ -587,6 +587,10 @@ Remote management uses the passphrase-established session cookie, not URL,
 protocol or Origin matching. No additional user key is required.
 Localhost also requires login for protected actions/internal state. The local-only
 operator phrase page remains available for login bootstrap, not automatic authorization.
+Enter the visible-text phrase in the dashboard's inline login form. Login stays on
+the selected run and preserves chart ranges; the next normal poll enables protected
+controls/data. The separate login page remains a fallback. No phrase is put in URLs
+or browser storage.
 Rename and delete confirmation use an inline form rather than native browser dialogs.
 Management requests show progress and persistent success/error feedback; archive/restore
 switches the visible list accordingly. A timeout leaves the outcome unknown: refresh

@@ -176,6 +176,13 @@ def dashboard_routes(
             headers={"Cache-Control": "no-store"},
         )
 
+    async def inline_login_script(request: Request) -> Response:
+        return FileResponse(
+            assets / "inline-login.js",
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
+
     async def plotly(request: Request) -> Response:
         return FileResponse(
             assets / "vendor" / "plotly-basic-4.0.0.min.js",
@@ -189,6 +196,7 @@ def dashboard_routes(
         Route("/", index),
         Route("/dashboard", page),
         Route("/session.js", script),
+        Route("/inline-login.js", inline_login_script),
         Route("/vendor/plotly-basic-4.0.0.min.js", plotly),
         Route("/api/runs", run_list),
         Route("/api/runs/{operation}", manage_run, methods=["POST"]),
