@@ -57,7 +57,9 @@
   non-interchangeable. Instrument state is not evidence of external wiring or
   no-load state.
 - Read gateway authentication only from the fixed, untracked
-  `gateway-auth.toml` file. Never expose its token in logs, tool arguments,
+  `gateway-auth.toml` file (which must exist, but token is optional). Pass the
+  driver's token or None unchanged; the gateway enforces configured authentication.
+  Never expose its token in logs, tool arguments,
   results, errors, fixtures, or committed configuration.
 - Use `settings/py-siglent-spd3000/gateway-auth.toml` as the canonical local
   credential path. Track only its sanitized `.template`; keep the populated

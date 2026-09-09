@@ -175,8 +175,6 @@ class SiglentDriverSessionFactory:
             self._configuration.gateway_auth_file,
             required=True,
         )
-        if token is None:
-            raise RuntimeError("Gateway authentication did not provide a token.")
         options["token"] = token
         device = module.SPD3000.connect(
             self._configuration.connection,

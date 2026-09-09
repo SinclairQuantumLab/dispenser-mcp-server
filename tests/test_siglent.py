@@ -221,6 +221,41 @@ def unloaded_configuration(
     )
 
 
+@pytest.mark.parametrize(
+    "contents,expected",
+    [
+        ("", None),
+        ("# token omitted\n", None),
+        ('token = ""\n', None),
+        ('token = "fixture-token"\n', "fixture-token"),
+    ],
+)
+def test_factory_optional_auth_uses_driver_loader(
+    tmp_path, monkeypatch, contents, expected
+):
+    from siglent_spd3000 import load_gateway_auth
+
+    config = configuration(tmp_path)
+    config.gateway_auth_file.write_text(contents)
+    options_seen = {}
+
+    def connect(*args, **kwargs):
+        options_seen.update(kwargs)
+        return SimpleNamespace(ch1=object(), close=lambda: None)
+
+    monkeypatch.setattr(
+        siglent,
+        "_load_driver_module",
+        lambda path: SimpleNamespace(
+            load_gateway_auth=load_gateway_auth,
+            SPD3000=SimpleNamespace(connect=connect),
+        ),
+    )
+    session = SiglentDriverSessionFactory(config)()
+    session.close()
+    assert options_seen["token"] == expected
+
+
 def test_factory_uses_authenticated_gateway_and_global_write_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

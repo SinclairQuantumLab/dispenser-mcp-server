@@ -59,7 +59,8 @@ settings or populated gateway-auth file is needed.
 
 Copy `settings/py-siglent-spd3000/gateway-auth.toml.template` to
 `settings/py-siglent-spd3000/gateway-auth.toml`, restrict it to the operator or
-service identity, and insert only the gateway token. The populated file is
+service identity, and set the token only if required by the gateway; otherwise leave
+the token line commented. The populated file is
 ignored by Git. Fill every placeholder in the three nonsecret TOMLs and leave
 `control_enabled = false` for the first start.
 
@@ -345,7 +346,7 @@ exact 0.2 A commanded-load upward step. The HiCube client, Siglent driver source
 settings directory, and authentication path are derived from the source
 checkout. No MCP tool or normal operator setting accepts any of those paths.
 
-Gateway authentication remains the sole populated secret file. Copy
+Gateway token authentication is optional and enforced by the gateway. Copy
 `settings/py-siglent-spd3000/gateway-auth.toml.template` to
 `settings/py-siglent-spd3000/gateway-auth.toml`; the populated file is ignored.
 The server uses the driver's strict loader and passes the token only to the
@@ -359,10 +360,13 @@ token = "<non-empty pre-shared token>"
 No other root key is accepted. The MCP deliberately delegates parsing and
 validation to `siglent_spd3000.load_gateway_auth(..., required=True)` so its
 authentication contract cannot drift from the gateway implementation.
+The file must exist; missing/commented/blank tokens produce `None`, passed unchanged
+to the gateway client. Set a token only if the gateway requires it. Invalid TOML/types
+still fail; no token is fabricated.
 Direct socket, VXI-11, and VISA connections are denied by this deployment's
 startup policy.
-Starting the server validates local files and policy but performs no device
-connection. A corresponding tool call opens one bounded session. Network exposure and
+Hardware CLI startup validates configuration and reads both instruments, stopping
+at the first failed read. Tool calls open bounded sessions. Network exposure and
 hardware control are independent settings; enabling remote access does not
 enable control. See the [transport contract](docs/transport-deployment-contract.md).
 
