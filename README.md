@@ -184,7 +184,7 @@ an associated observer file; this never changes MCP tool results or decision inp
 The phrase has two random words and two digits, changes each HTTP process, and
 is reusable during that process. Five incorrect logins block further login
 attempts for up to 60 seconds across the process; cookies remain separate random
-secrets. The dashboard shows the current phrase near the top to loopback viewers and
+secrets. The dashboard shows the current phrase near the top to logged-in local and
 already-authenticated remote viewers, never anonymous visitors. It is valid until
 server restart and is not saved in records or static assets.
 Ordinary dashboard pages, assets, run lists and observation/action/decision data
@@ -193,7 +193,8 @@ still require the operator phrase at `/dashboard/login`. The locked internal
 section does not poll or interrupt ordinary plots; unlocking preserves the selected
 saved run. Each HTTP process generates a new code, shown only in its startup
 terminal, server-loopback `/dashboard/operator` page, or already-authorized dashboard. Actual
-loopback connections can view directly. The code is reusable until restart, not a
+loopback connections can retrieve the phrase on the operator page, but must log in
+for protected data and actions. The code is reusable until restart, not a
 single-use OTP; it is never an MCP argument or result. Keep it and the resulting
 browser cookie out of the remote decision agent’s context. This does not isolate
 same-host agents with local file, loopback, or terminal access. See the
