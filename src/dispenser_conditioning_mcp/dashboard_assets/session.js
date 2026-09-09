@@ -135,6 +135,11 @@ function watchTimeView(id) {
 function showViewError(error) { el("status").textContent="Chart update failed: "+error.message; }
 const el = id => document.getElementById(id);
 let operatorAuthorized = document.body.dataset.operatorAuthorized === "true";
+let loginRevision=0;
+document.addEventListener("dashboard-login-success",()=>{
+  loginRevision++;operatorAuthorized=true;updateManagement();
+  poll();
+});
 for(const link of document.querySelectorAll(".operator-unlock")) {
   const target=new URL("/dashboard/login",location.origin);
   for(const key of ["run","archived"]) {const value=new URLSearchParams(location.search).get(key);if(value!==null)target.searchParams.set(key,value);}
@@ -429,6 +434,7 @@ function readFailure(error) {
 async function poll() {
   if (pollRunning) return;
   clearTimeout(pollTimer);pollRunning=true;
+  const startedLoginRevision=loginRevision;
   let catchUp=false;
   try {
     const response = await fetch(`/api/session?after=${cursor}&generation=${generation}&${runQuery}`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
@@ -438,7 +444,7 @@ async function poll() {
     const changed = data.reset || (data.events?.length || 0) > 0 || operatorAuthorized !== (data.operator_authorized === true);
     if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); resultsByCall.clear(); recordNumbers.clear(); selectedId = null; resetTimeView("chart");resetTimeView("truth-chart");clearTruth(); }
     metadata = data.metadata || metadata;
-    operatorAuthorized = data.operator_authorized === true;
+    if(startedLoginRevision===loginRevision) operatorAuthorized = data.operator_authorized === true;
     runManagement = data.run_management || {};
     updateManagement();
     if (metadata.session_id && clockInitializedFor !== metadata.session_id) {
@@ -571,6 +577,9 @@ let managementBusy = false;
 const collection = el("run-collection");
 collection.value = new URLSearchParams(location.search).get("archived") === "true" ? "archived" : "active";
 function updateManagement() {
+  const reason=managementBusy ? "Run update in progress." : !operatorAuthorized ? "Log in to manage runs." : !runManagement.name ? "Waiting for selected run details." : runManagement.current ? "This is the current recording run: rename is allowed, but archive/delete are unavailable. Select a saved run to archive it." : "Selected saved run: management is available.";
+  el("management-reason").textContent=reason;
+  el("archive-run").title=reason;
   el("rename-run").disabled = managementBusy || !operatorAuthorized;
   el("restore-run").disabled = managementBusy || !operatorAuthorized;
   el("archive-run").disabled = managementBusy || !operatorAuthorized || !runManagement.name || !!runManagement.current;

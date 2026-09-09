@@ -27,6 +27,7 @@ loginForm.addEventListener("submit",async event=>{
     const result=await response.json();
     if(result.authorized!==true) throw new Error("Login was not confirmed.");
     document.body.dataset.operatorAuthorized="true";
+    document.dispatchEvent(new Event("dashboard-login-success"));
     // Existing session polling authoritatively enables controls and loads protected
     // rows. No page navigation, cursor reset or chart-range changes are needed.
     loginForm.hidden=true;phraseInput.value="";
