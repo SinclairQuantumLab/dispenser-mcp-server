@@ -73,12 +73,6 @@ def dashboard_routes(
             return JSONResponse({"error": "Run list unavailable"}, status_code=500)
 
     async def manage_run(request: Request) -> Response:
-        origin = request.headers.get("origin")
-        if origin and origin != str(request.base_url).rstrip("/"):
-            return JSONResponse(
-                {"error": "Run management requires the dashboard origin"},
-                status_code=403,
-            )
         if request.headers.get("content-type", "").split(";")[0] != "application/json":
             return JSONResponse(
                 {"error": "Expected dashboard JSON request"}, status_code=415

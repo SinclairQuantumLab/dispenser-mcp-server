@@ -15,6 +15,37 @@ from dispenser_conditioning_mcp.session_records import SessionRecorder
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("peer", ["127.0.0.1", "192.0.2.5"])
+async def test_management_requires_cookie_not_origin(tmp_path, monkeypatch, peer):
+    from dispenser_conditioning_mcp.dashboard_access import COOKIE_NAME, DashboardAccess
+
+    current, saved = fixture(tmp_path, monkeypatch)
+    access = DashboardAccess()
+    app = Starlette(routes=dashboard_routes(current.directory, access=access))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, client=(peer, 1)),
+        base_url="http://fixture",
+    ) as client:
+        for origin in ("null", "https://elsewhere", "https://fixture"):
+            body = {"run": "saved", "display_name": "Cookie authorized"}
+            headers = {"Origin": origin}
+            client.cookies.clear()
+            assert (
+                await client.post("/api/runs/rename", headers=headers, json=body)
+            ).status_code == 401
+            client.cookies.set(COOKIE_NAME, access.cookie)
+            assert (
+                await client.post("/api/runs/rename", headers=headers, json=body)
+            ).status_code == 200
+        assert (
+            json.loads((saved.directory / "run-management.json").read_text())[
+                "display_name"
+            ]
+            == "Cookie authorized"
+        )
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("outcome", ["complete", "incomplete", "aborted", "unknown"])
 async def test_recorded_completion_unlocks_current_hindsight_without_relocking(
     tmp_path, outcome
@@ -192,10 +223,14 @@ async def test_human_management_post_auth_archive_delete_and_cache(
 ):
     current, saved = fixture(tmp_path, monkeypatch)
     original = (saved.directory / "events.jsonl").read_bytes()
-    app = Starlette(routes=dashboard_routes(current.directory))
+    from dispenser_conditioning_mcp.dashboard_access import COOKIE_NAME, DashboardAccess
+
+    access = DashboardAccess()
+    app = Starlette(routes=dashboard_routes(current.directory, access=access))
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://localhost"
     ) as client:
+        client.cookies.set(COOKIE_NAME, access.cookie)
         assert (await client.get("/api/runs/archive")).status_code == 405
         assert (
             await client.post(
@@ -203,7 +238,8 @@ async def test_human_management_post_auth_archive_delete_and_cache(
                 json={"run": "saved"},
                 headers={"Origin": "http://elsewhere"},
             )
-        ).status_code == 403
+        ).status_code == 200
+        await client.post("/api/runs/restore", json={"run": "saved"})
         assert (
             await client.post("/api/runs/archive", json={"run": ""})
         ).status_code == 400

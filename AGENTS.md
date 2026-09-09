@@ -179,10 +179,13 @@
   decisions are public. Guard internal simulation data and management POSTs with
   the existing operator boundary. Locked truth must not block ordinary polling.
   Preserve selected runs across login. Leave /mcp independent. Show access phrases in the HTTP startup terminal, socket-loopback operator page,
-  and dashboard for loopback or already-authenticated remote viewers; never anonymous
+  and dashboard for passphrase-authenticated viewers; never anonymous
   remote/login pages, static assets, MCP results,
   records or URLs. Disable proxy_headers on owned HTTP entrypoints. This excludes
-  uncredentialed remote tool-only agents, not same-host full-access agents or
+  uncredentialed tool-only agents; localhost also needs the login cookie for protected
+  actions/internal state. Do not use Origin/URL/protocol as additional authorization.
+  The local operator phrase page is bootstrap only, not automatic authorization.
+  This does not isolate same-host full-access agents or
   untrusted proxies whose connections appear local. Do not claim OS isolation.
 - Operator TOML selects hardware (default) or simulation backend before hardware
   assembly. Never fall back between them or expose backend/seed/scenario in tools.

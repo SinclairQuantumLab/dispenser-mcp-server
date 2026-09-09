@@ -582,6 +582,10 @@ labelled hindsight, not a contemporaneous public instrument observation.
 
 In the authenticated dashboard, choose **Main list** or **Archive** at any time.
 Rename changes only a display label. Archive/restore changes only list membership.
+Remote management uses the passphrase-established session cookie, not URL,
+protocol or Origin matching. No additional user key is required.
+Localhost also requires login for protected actions/internal state. The local-only
+operator phrase page remains available for login bootstrap, not automatic authorization.
 Rename and delete confirmation use an inline form rather than native browser dialogs.
 Management requests show progress and persistent success/error feedback; archive/restore
 switches the visible list accordingly. A timeout leaves the outcome unknown: refresh

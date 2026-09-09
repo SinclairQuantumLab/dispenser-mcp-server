@@ -46,7 +46,7 @@ class DashboardAccess:
             return False
 
     def authorized(self, request: Request) -> bool:
-        return self.local(request) or hmac.compare_digest(
+        return hmac.compare_digest(
             request.cookies.get(COOKIE_NAME, "").encode(), self.cookie.encode()
         )
 
