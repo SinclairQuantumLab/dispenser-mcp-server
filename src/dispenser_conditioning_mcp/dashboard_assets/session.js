@@ -592,6 +592,9 @@ async function manageRun(operation, input = null) {
     el("management-input").focus();return;
   }
   const body = {run:selectedRun};
+  const availableRuns=[...el("run-picker").options].filter(option=>!option.disabled).map(option=>option.value);
+  const selectedIndex=availableRuns.indexOf(selectedRun);
+  const afterArchive=availableRuns[selectedIndex-1] ?? availableRuns[selectedIndex+1] ?? "";
   if(operation === "rename") body.display_name=input;
   if(operation === "delete") body.confirmation=input;
   managementBusy=true;updateManagement();
@@ -604,7 +607,13 @@ async function manageRun(operation, input = null) {
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${result.error || "Run action rejected"}`);
     if (result.deleted) {window.location.assign("/dashboard");return;}
     Object.assign(runManagement,result);el("management-editor").hidden=true;
-    if(operation === "archive" || operation === "restore") {
+    if(operation === "archive") {
+      const url=new URL(location.href);
+      url.searchParams.set("archived",String(collection.value === "archived"));
+      if(afterArchive) url.searchParams.set("run",afterArchive);else url.searchParams.delete("run");
+      window.location.assign(url.href);return;
+    }
+    if(operation === "restore") {
       collection.value=result.archived ? "archived" : "active";
       const url=new URL(location.href);url.searchParams.set("archived",String(result.archived));history.replaceState(null,"",url);
     }
