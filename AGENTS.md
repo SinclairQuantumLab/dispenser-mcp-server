@@ -136,22 +136,51 @@
 
 ## MCP-owned session records
 
-- Hardware CLI startup performs one read-only G1 and PSU check before listening;
-  stop on the first failure and propagate its original chained exception. Keep construction/offline checks
-  and simulation free of these reads. Operator diagnostics use ordinary tracebacks without local-variable/config dumps;
-  never print credentials. Close connections on failure, never actuate as cleanup.
+- The persistent HTTP/MCP process starts idle. Idle startup validates only the
+  listener bootstrap, imports no hardware driver, reads no instrument and creates
+  no run. Authenticated operator check performs bounded read-only candidate checks;
+  failure leaves the listener alive and creates no run. Close check connections on
+  failure and never actuate as cleanup.
 
-- Default hardware and simulator MCP records to this checkout’s `runs/` through
+- Default hardware and simulator MCP records to the selected SourceLayout checkout’s `runs/` through
   the shared run-directory helper: UTC timestamp, hardware/simulation label, unique
   suffix. Keep each run flat and preserve explicit simulator path overrides.
-  One process remains one run; do not add a lifecycle orchestrator or move
-  historical records automatically. Track only the central runs/README.md.
+  The lightweight coordinator owns at most one explicitly started run. Backend
+  switches require explicit stop, save, check and start; none of those lifecycle
+  transitions imply OFF or ON. Do not move historical records automatically.
 
 - Keep all runtime recorder, context and dashboard code/assets inside this
   independently cloneable repository. Do not import parent-project modules.
-- The MCP records direct calls and brief agent-supplied action context. It does
-  not choose actions, sample in the background, assess narrative quality, or
-  apply confidence thresholds as an actuation-approval algorithm.
+- The MCP records direct calls and brief agent-supplied action context. Every
+  explicitly started web run samples pressure and power on real wall time,
+  independently of agent/browser presence. It never chooses
+  actions, assesses narrative quality, or applies confidence thresholds as an
+  actuation-approval algorithm.
+- Operator authority is independent of acquisition. `human_learning` denies every
+  agent instrument mutation (including shutdown); `agent_control` permits only
+  exact active-run-bound mutations through unchanged safety contracts. Sampling
+  continues in either authority. Authenticated human controls require explicit
+  takeover from agent authority and reuse the same controller. Drain in-flight
+  calls before an authority/interval transition; never actuate on lifecycle/error.
+  Human notes and bounded run reviews are run-owned metadata. Agent tools may
+  read notes/reviews and idempotently append reviews, but may not use metadata
+  tools to control equipment, stop acquisition, or expose simulator truth.
+- In Learning simulation, public pressure/power reads may not request positive
+  `elapsed_s`; only actual wall time advances the model. Dashboard reads never
+  advance the model. Preserve one serialized simulator clock/control owner.
+- Record per-event `actor` provenance (`agent`, `human`, or
+  `learning_sampler`) independently of the run-level source. Unknown external
+  setting changes record only their observation interval and detection time;
+  never invent intent or an exact change time.
+- Keep one ignored `settings/console-settings.toml` for saved nonsecret web run
+  preferences. Existing main/instrument TOMLs are listener bootstrap and initial
+  suggestion sources, not an alternate runtime dispatch path. Credentials remain
+  in the fixed ignored auth file. No agent tool exposes settings, seed/scenario,
+  connection values, paths or credentials.
+- The stable web MCP wrapper always exposes `read_server_status`. Require its
+  opaque active `run_binding` on every agent instrument mutation, including
+  shutdown; reject stale/idle/human-owned calls before backend dispatch. Same-run
+  authority/interval changes retain the binding; stop/new-run invalidates it.
 - Normal prepare/enable/set require action_context; keep shutdown callable with
   no context. Attempt shutdown before ordinary recording. Preserve the existing
   controller identity/control-enable/HIL restrictions; do not conflate the

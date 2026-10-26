@@ -17,6 +17,13 @@ backend = "simulation"
 # Lowering does not reduce an existing output. Inspect state; later targets must be <=cap.
 max_load_current_A = 4.8
 
+# Optional passive Learning mode. It samples on real wall time only and prevents
+# agent instrument mutations while enabled. Dashboard polling never advances time.
+[learning]
+enabled = false
+# Real-wall seconds between passive samples: numeric 0.1 through 3600; default 5.0.
+sample_interval_s = 5.0
+
 # Simulation-only settings below; the reloadable max_load_current_A stays above this table.
 [simulation]
 # Simulation mutations: strict true/false, default true. Set false to test read-only operation.

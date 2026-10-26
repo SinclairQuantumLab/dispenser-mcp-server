@@ -28,3 +28,12 @@ max_load_current_A = 4.8
 # Required hardware fixed compliance voltage: numeric volts, 0 through 32, resolution 0.001 V.
 # Use the operator-approved voltage for this setup; never infer approval for a different live setup.
 compliance_voltage_v = 1.2
+
+# Optional passive Learning mode. Startup-only; false preserves agent-led operation.
+# When true, the server samples pressure and PSU state on real wall time even with no
+# agent/browser connected, denies every agent instrument mutation (including OFF),
+# and exposes separate authenticated human controls through the dashboard.
+[learning]
+enabled = false
+# Real-wall seconds between passive samples: numeric 0.1 through 3600; default 5.0.
+sample_interval_s = 5.0

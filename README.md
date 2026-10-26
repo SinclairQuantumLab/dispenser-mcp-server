@@ -16,13 +16,19 @@ See the exact [pressure contract](docs/pressure-observation-contract.md),
 
 ## Quick start
 
-One HTTP process serves either real instruments or an internal Python simulator.
-The operator selects `backend = "hardware"` (default) or `"simulation"` in the main
-TOML. There is no fallback between them and no model-facing backend switch.
+One persistent HTTP process starts **idle**. Idle startup opens no instrument,
+imports no hardware driver, allocates no run and performs no acquisition. An
+authenticated human uses `/console` to save one nonsecret run candidate, perform
+an explicit read-only check, and then start a new hardware or simulation run.
+A failed check leaves the web server available and creates no empty run.
 
-This Python repository runs on any supported host with Git, `uv`, and Python
-3.13. Real-hardware first commissioning is read-only. Keep its `control_enabled = false`, and
-never commit the populated gateway-authentication file.
+This source checkout runs on any supported host with Git, `uv`, and Python 3.13.
+The main TOML supplies only listener bootstrap defaults (`port` and
+`allow_remote_access`) to the idle process. The operator console saves run
+preferences atomically in ignored `settings/console-settings.toml`; the existing
+HiCube and Siglent TOMLs are used only to suggest initial values. Credentials
+remain in the ignored gateway-authentication file and are never returned to the
+browser or MCP client.
 
 ```sh
 git clone --recurse-submodules https://github.com/SinclairQuantumLab/dispenser-mcp-server.git
@@ -35,8 +41,9 @@ The recursive clone checks out the pinned `py-siglent-spd3000` source, and
 declared in `pyproject.toml`. If `uv` is missing, follow its
 [official installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
 
-For the hardware backend, first copy the tracked templates to local runtime files
-**only when those files do not already exist**, then edit the copies:
+Optionally copy the existing source settings to provide initial console
+suggestions and listener bootstrap values. Missing instrument files do not block
+idle startup:
 
 ```sh
 cp settings/mcp-settings.toml.template.hardware settings/mcp-settings.toml
@@ -45,44 +52,33 @@ cp settings/py-siglent-spd3000/gateway-settings.toml.template settings/py-siglen
 ```
 
 `settings/.gitignore` excludes actual `*.toml` recursively; templates stay tracked.
-Runtime paths are unchanged. MCP-owned settings use the current field set without `schema_version`; remove that obsolete key from local settings:
+Runtime paths are unchanged. The first three files are optional suggestion/bootstrap
+sources; the console writes only the final file:
 
 ```text
 settings/mcp-settings.toml
 settings/hicube-neo-client-settings.toml
 settings/py-siglent-spd3000/gateway-settings.toml
+settings/console-settings.toml
 ```
-
-The following configuration and deployment check are for **backend = "hardware"**.
-For a hardware-free host, use the simulation instructions below instead; no live
-settings or populated gateway-auth file is needed.
 
 Copy `settings/py-siglent-spd3000/gateway-auth.toml.template` to
 `settings/py-siglent-spd3000/gateway-auth.toml`, restrict it to the operator or
 service identity, and set the token only if required by the gateway; otherwise leave
 the token line commented. The populated file is
-ignored by Git. Fill every placeholder in the three nonsecret TOMLs and leave
-`control_enabled = false` for the first start.
-
-Validate and start with the same commands on every supported host:
+ignored by Git. Start the idle web console with the same command for either
+backend:
 
 ```sh
-uv run python -m dispenser_conditioning_mcp.deployment_check
 uv run dispenser-conditioning-mcp
 ```
 
-Normal hardware CLI startup reads G1 and PSU once, printing PASS with pressure or
-PSU identity/output/current, or FAIL followed by the ordinary chained exception traceback.
-The first failed read aborts startup; the HTTP listener does not start.
-No output/settings writes occur. Simulation startup and ordinary application
-construction do not run these checks. These startup diagnostics are not run records.
-
-The offline check validates local settings and imports without a device
-connection. Its stage codes identify configuration, transport, imports,
-authentication-file access, and server assembly failures. `--diagnostic`
-includes the exception class. These are operator diagnostics, distinct from
-sanitized model-facing tool errors. Ordinary local troubleshooting may inspect
-nonsecret settings, paths, endpoints, and logs; never disclose token contents.
+Open `http://<server-host>:<port>/console`, log in with the process-scoped
+operator phrase shown on stderr, review/save the candidate, select **Check saved
+settings**, then explicitly select **Start new run**. Start never prepares,
+enables, zeros, ramps or shuts down the PSU. Keep `control_enabled = false` for
+first hardware commissioning. Simulation does not require hardware addresses,
+serial identity, driver/auth files or invented placeholder values.
 
 Streamable HTTP always listens at `/mcp`. The default
 `allow_remote_access = false` binds `127.0.0.1:8000`. To connect directly
@@ -90,10 +86,15 @@ from another computer, set `allow_remote_access = true` and connect to
 `http://<Pi-IP>:8000/mcp` (or its resolvable hostname). `port` is a top-level
 integer setting. SSH forwarding is optional. This supervised native-client pilot
 rejects browser Origin headers on `/mcp` and has no built-in client authentication.
-The same process serves the read-only dashboard at `/dashboard`.
+The same process serves the observation dashboard at `/dashboard`. Before the
+first run it returns to the operator console. After a run ends (or after restart
+when current-format saved runs exist), it remains a replay browser for saved
+records and never creates a recording merely because the page was opened.
 
-During first commissioning, call only `read_vacuum_pressure` and
-`read_dispenser_power_state`. See the
+During first commissioning, start a checked read-only run and call only
+`read_server_status`, `read_vacuum_pressure` and
+`read_dispenser_power_state`. Instrument mutations require the exact active
+`run_binding` returned by status. See the
 [detailed Raspberry Pi research guide](deployment/raspberrypi/QUICK_COMMISSIONING.md)
 for the supervised commissioning sequence.
 
@@ -109,16 +110,12 @@ are ignored and will no longer be replaced by tracked defaults.
 
 ## Independent simulation host
 
-After the same recursive clone and ordinary `uv sync`, replace only
-`settings/mcp-settings.toml` with a copy of `settings/mcp-settings.toml.template.simulation` (preserve any
-existing operator profile first). For a fresh simulation host:
-
-```sh
-cp settings/mcp-settings.toml.template.simulation settings/mcp-settings.toml
-```
-
-Set `allow_remote_access = true` if the decision
-agent is on another machine, then run the same command:
+After the same recursive clone and ordinary `uv sync`, start the idle server and
+choose **Simulation** in `/console`. Enter a nonempty private seed and a supported
+scenario such as `nominal_recovery`, save, check, and start. No hardware identity,
+HiCube/Siglent address, driver import or populated gateway-auth file is required
+for a simulation candidate. `allow_remote_access` and `port` remain listener
+bootstrap values in the main TOML.
 
 ```sh
 uv run dispenser-conditioning-mcp
@@ -127,15 +124,17 @@ uv run dispenser-conditioning-mcp
 The simulator runs **inside** this process, not at another externally exposed port.
 The clone contains its canonical runtime at `src/dispenser_simulator/`; the parent
 project is not needed. One RecordingAdapter creates one run under `runs/`, with
-the same eight public tools, session IDs, records, protected human dashboard and
+the same public observation/control/history contracts, session IDs, records,
+protected human dashboard and
 internal observer file. Seed/scenario stay operator-only and out of MCP results.
 The example is a disclosed connectivity fixture, not a hidden scientific test.
 Before a blind run, choose private operator configuration and keep source/files,
 loopback, authenticated dashboard and terminal inaccessible to the remote agent.
 
-New HTTP simulation defaults are synthetic `production_dispenser`,
-`control_enabled = true`, `compliance_voltage_v = 1.0` V. The voltage is a
-simulation-only test value, **not approved for live equipment**. Existing model
+The console suggestion uses synthetic `production_dispenser`,
+`control_enabled = false`, and `compliance_voltage_v = 1.0` V. Review these
+explicitly before saving. The voltage is a simulation-only test value, **not
+approved for live equipment**. Existing model
 limits remain 6.4 A device ceiling and 0.2 A upward steps. Simulation reads and
 prepare/enable/set accept optional `elapsed_s` (0..86400 seconds, default 0).
 Each physical interaction irreversibly advances by the greater of that request
@@ -157,14 +156,23 @@ The legacy deployment-check command is for the hardware backend, not required he
 
 ## Tool surface
 
+`read_server_status({})` is always available and performs no instrument read. It
+reports idle/running lifecycle, the opaque active `run_binding`, backend,
+authority, sampler freshness/health and registered optional-capability
+descriptors without exposing connection settings, credentials, seed or scenario.
+The instrument and run-history catalog becomes available after the first
+explicit run start. Every agent instrument mutation, including shutdown,
+requires the exact current `run_binding`; stop/new-run invalidates it. A same-run
+authority or sampling-interval change retains it but cancels old action plans.
+
 | Tool | Input | Purpose |
 | --- | --- | --- |
 | `read_vacuum_pressure` | none | Read one total-pressure snapshot |
 | `read_dispenser_power_state` | none | Read identity, topology, native setpoints/readbacks, output state, and fixed safety limits |
-| `prepare_dispenser_power` | `action_context` | Destructively overwrite the bound state: output off, zero current, then fixed compliance voltage |
-| `enable_dispenser_output` | `action_context` + one startup-context-specific confirmation | Enable only from the verified prepared zero-current state after the required fresh human physical confirmation |
-| `set_dispenser_current` | `action_context`, `target_current_a`, `expected_current_a` | Compare-and-set an absolute commanded load-current limit while output is on |
-| `shutdown_dispenser_power` | none | Perform an energy-reducing destructive overwrite: required outputs off first, then currents zero |
+| `prepare_dispenser_power` | `run_binding`, `action_context` | Destructively overwrite the bound state: output off, zero current, then fixed compliance voltage |
+| `enable_dispenser_output` | `run_binding`, `action_context` + one startup-context-specific confirmation | Enable only from the verified prepared zero-current state after the required fresh human physical confirmation |
+| `set_dispenser_current` | `run_binding`, `action_context`, `target_current_a`, `expected_current_a` | Compare-and-set an absolute commanded load-current limit while output is on |
+| `shutdown_dispenser_power` | `run_binding` | Perform an energy-reducing destructive overwrite: required outputs off first, then currents zero |
 
 The **unreleased session-recording interface extension** adds a seventh tool,
 `record_conditioning_decision(action_context, completion?)`, for a declared hold
@@ -173,8 +181,31 @@ brief agent context; shutdown still accepts `{}` and executes before ordinary
 logging. Read results provide the session and observation IDs to reference.
 See [the exact context/recording contract](docs/session-recording-contract.md).
 
-Both entrypoints share the MCP checkout’s [run directory](runs/README.md);
-simulator defaults use the `_simulation_` label. One process creates one run.
+Optional Learning mode adds four metadata tools:
+
+- `read_learning_mode_status` reports passive-sampler state and the active
+  permissions without querying instruments.
+- `append_conditioning_run_review` idempotently attaches one bounded report and
+  guidance-change record to a current or saved run.
+- `read_conditioning_run_reviews` pages review summaries or returns one full
+  review selected by `review_id`.
+- `read_conditioning_run_notes` pages authenticated human notes.
+
+Every explicitly started run performs periodic pressure and power acquisition on
+real wall time, independently of the browser and agent. The console's
+`authority_mode` is separate: `agent_control` permits bound agent mutations,
+while `human_learning` denies every agent instrument mutation, including
+shutdown. Authenticated human controls reuse the same controller,
+confirmations, compare-and-set rule, ceilings and interlocks. A human operation
+from agent authority requires an explicit operator takeover first. Authority or
+interval changes drain in-flight work and never change output. Sampler startup,
+shutdown and read errors never actuate hardware.
+Simulation Learning uses only real wall time; positive `elapsed_s` on public
+pressure/power reads is rejected rather than advancing the synthetic future.
+
+Both backends share the MCP checkout’s [run directory](runs/README.md);
+simulator defaults use the `_simulation_` label. Each explicit start creates one
+new run; one process holds at most one active run.
 The server records raw JSONL and CSVs under `runs/<UTC-date-time>_hardware_<8hex>/`. Open
 `http://<server-IP>:8000/dashboard` for observations, control attempts/results,
 and declared rationale. A prominent source-mode strip distinguishes simulation,
@@ -322,25 +353,27 @@ server with the quick-start command and register its URL in your MCP client.
 
 ## Operator startup configuration
 
-Package 0.6.1 uses the environment-variable-free operator interface introduced
-in 0.6.0, comprising three
-strict, closed TOML documents. Missing files, missing required values,
-placeholders, unknown keys, wrong TOML types, and invalid ranges deny startup
-before any device connection. The six hardware tools retain their structured observation/action results and
-hardware safety semantics. The unreleased session-recording extension changes
-normal control inputs and adds one declaration tool; it is not identical to the
-older v0.4.3 input schema.
+The listener boots from only `allow_remote_access` and `port` in the main TOML;
+when that file is absent it defaults to loopback port 8000. Instrument documents
+and credentials are not required until an authenticated operator saves and
+checks a hardware candidate. `settings/console-settings.toml` is a strict,
+closed, atomically replaced nonsecret document. Unknown keys, wrong types,
+placeholders and invalid ranges reject save/check before device access. A
+simulation candidate does not require unused hardware identity or address
+values. The hardware tools retain their structured results and deterministic
+safety semantics.
 
 | File | Operator settings |
 | --- | --- |
-| `settings/mcp-settings.toml` | Explicit acceptance context, expected PSU serial, fixed compliance voltage, control flag, allow_remote_access (default false), port (default 8000), |
-| `settings/hicube-neo-client-settings.toml` | HiCube host, port (default 4840), and timeout (default 5 s) |
-| `settings/py-siglent-spd3000/gateway-settings.toml` | Gateway identifier, timeout (default 5 s), and minimum command interval (default 100 ms) |
+| `settings/mcp-settings.toml` | Listener bootstrap (`allow_remote_access`, `port`) and optional initial console suggestions from the previously supported source profile |
+| `settings/hicube-neo-client-settings.toml` | Optional initial HiCube host/port/timeout suggestions |
+| `settings/py-siglent-spd3000/gateway-settings.toml` | Optional initial gateway identifier/timeout/minimum-command-interval suggestions |
+| `settings/console-settings.toml` | Saved backend, authority, acquisition, hardware/simulation and safety candidate used by check/start |
 
 `control_enabled` and `allow_remote_access` default to `false`; `port` defaults to
-`8000`. The
-acceptance context, expected serial, compliance voltage, HiCube host, and
-gateway identifier have no implicit deployment value and must be filled in.
+`8000`. Hardware acceptance context, expected serial, compliance voltage,
+HiCube host and gateway identifier have no implicit deployment value. The
+console validates them only when the selected candidate is hardware.
 
 The following deployment contract is fixed in code and cannot be weakened in a
 settings file: authenticated gateway connection, `parallel_ch1`, `CH1`, model
@@ -368,9 +401,10 @@ to the gateway client. Set a token only if the gateway requires it. Invalid TOML
 still fail; no token is fabricated.
 Direct socket, VXI-11, and VISA connections are denied by this deployment's
 startup policy.
-Hardware CLI startup validates configuration and reads both instruments, stopping
-at the first failed read. Tool calls open bounded sessions. Network exposure and
-hardware control are independent settings; enabling remote access does not
+The authenticated **Check saved settings** action performs the read-only
+pressure/PSU check without allocating a run. A failed check does not stop the web
+listener. Tool calls open bounded sessions only after explicit start. Network
+exposure and hardware control are independent; enabling remote access does not
 enable control. See the [transport contract](docs/transport-deployment-contract.md).
 
 When updating an existing checkout, preserve your edited settings before pulling:
@@ -415,7 +449,7 @@ conditioning or activation evidence.
 ## Integration and later safety layers
 
 Register `http://<server-IP>:8000/mcp` as a Streamable HTTP endpoint in the MCP
-host. Keep the process running and inspect the eight-tool catalog before live reads.
+host. Keep the process running and inspect the discovered tool catalog before live reads.
 Use `control_enabled = false` during first catalog/read-only integration.
 
 Before unattended autonomous conditioning, separate higher-level work must add
@@ -537,36 +571,23 @@ A dashboard deadline/network error keeps displayed data and retries. It does not
 mean that MCP controls, recording, or the equipment stopped. Paging bounds record
 count, not individual string bytes; the browser still retains all loaded points.
 
-### Operator current cap and explicit reload
+### Operator current cap
 
 Top-level `max_load_current_A = 4.8` (capital A) sets the combined **commanded**
 load-current ceiling for hardware and HTTP simulation. Valid values are finite
-numbers greater than zero and no greater than 6.4 A; omission defaults to 4.8 at
-startup. It is not a measured parallel-current value. The software maximum 6.4 A /
-native 3.2 A / parallel 6.4 A device bounds are separate constraints; the exact 0.2 A upward step remains unchanged.
+numbers greater than zero and no greater than 6.4 A. It is not a measured
+parallel-current value. The software maximum 6.4 A / native 3.2 A / parallel
+6.4 A device bounds are separate constraints; the exact 0.2 A upward step remains
+unchanged.
 
-After the operator edits this key, the agent may call
-`reload_dispenser_current_limit()` with **no arguments**. The server reads only
-this field from its canonical settings/mcp-settings.toml. No value, path,
-decision context, device access, actuation or simulated-time advancement is
-required. Missing/invalid/unreadable values leave the old cap unchanged. No other
-settings (backend, credentials, control authorization, compliance) are reloaded.
-
-The result gives previous/applied/effective caps, explicitly reports hardware
-unchanged, and recommends fresh state inspection after lowering. An already
-energized output is neither clamped nor turned off; it may remain above the new
-cap. Subsequent targets must be <=cap, including decreases; shutdown remains
-available. Enable still requires prepared zero current. Raising within 6.4 A is
-allowed only through the operator file; 5.0 A is valid when the applied cap permits it.
-
-Initialize instructions advertise the initial cap. State/reload results report
-the applied cap; cached input schemas retain the absolute device ceiling of 6.4 A so a later
-valid increase is not rejected by a stale discovery limit. All calls are recorded
-through the ordinary session logger. The standalone injected simulator without
-an operator settings layout advertises reload but reports it unavailable.
+The authenticated web console owns this setting. It is fixed for the active run:
+changing it requires stop, save, read-only check, and explicit new-run start.
+Those lifecycle actions do not prepare, enable, clamp, zero, or shut down the
+output. The stable runtime wrapper does not advertise the lower-level
+`reload_dispenser_current_limit` test/integration hook to agents.
 ## Recorded-run browsing and human management
 
-The catalog now includes eleven tools. Three read-only history tools never query
+The discovered catalog includes three read-only history tools that never query
 instruments, advance/reset simulation time, or append their own results to the run:
 
 - `list_conditioning_runs(archived=false, after=0, limit=100)` returns up to 100
