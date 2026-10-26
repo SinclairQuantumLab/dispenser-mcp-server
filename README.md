@@ -73,12 +73,19 @@ backend:
 uv run dispenser-conditioning-mcp
 ```
 
-Open `http://<server-host>:<port>/console`, log in with the process-scoped
-operator phrase shown on stderr, review/save the candidate, select **Check saved
-settings**, then explicitly select **Start new run**. Start never prepares,
-enables, zeros, ramps or shuts down the PSU. Keep `control_enabled = false` for
-first hardware commissioning. Simulation does not require hardware addresses,
-serial identity, driver/auth files or invented placeholder values.
+After the listener is ready, a GUI host makes one best-effort attempt to open the
+local operator console automatically. The startup terminal always prints a
+one-use loopback link and the process-scoped operator phrase; a headless Linux
+host only prints them. The link carries a separate random secret in its URL
+fragment, removes the fragment before redeeming it in a POST body, and becomes
+invalid after one successful use or process restart. Treat the printed link as
+sensitive. Ordinary phrase login remains the fallback.
+
+In `/console`, review/save the candidate, select **Check saved settings**, then
+explicitly select **Start new run**. Start never prepares, enables, zeros, ramps
+or shuts down the PSU. Keep `control_enabled = false` for first hardware
+commissioning. Simulation does not require hardware addresses, serial identity,
+driver/auth files or invented placeholder values.
 
 Streamable HTTP always listens at `/mcp`. The default
 `allow_remote_access = false` binds `127.0.0.1:8000`. To connect directly
@@ -615,8 +622,10 @@ Rename changes only a display label. Archive/restore changes only list membershi
 Remote management uses the passphrase-established session cookie, not URL,
 protocol or Origin matching. No additional user key is required.
 Localhost also requires login for protected actions/internal state. The operator
-phrase is initially available only in the startup terminal; the phrase page is
-an authenticated convenience, not a bootstrap or automatic authorization path.
+phrase and separate one-use console link are initially available only in the
+startup terminal; the phrase page is an authenticated convenience. On a GUI
+host the server attempts to open the link once after the listener reports ready;
+on headless Linux it does not invoke a browser.
 Enter the visible-text phrase in the dashboard's inline login form. Login stays on
 the selected run and preserves chart ranges; the next normal poll enables protected
 controls/data. The separate login page remains a fallback. No phrase is put in URLs

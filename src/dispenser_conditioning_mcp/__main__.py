@@ -5,14 +5,13 @@ from __future__ import annotations
 import logging
 import sys
 
-import uvicorn
-
 from dispenser_conditioning_mcp.config import ConfigurationError
 from dispenser_conditioning_mcp.runtime_coordinator import (
     RuntimeCoordinator,
     bootstrap_transport,
     create_runtime_http_app,
 )
+from dispenser_conditioning_mcp.transport import run_http_application
 
 
 def main() -> None:
@@ -31,13 +30,7 @@ def main() -> None:
         raise SystemExit(2) from error
 
     app = create_runtime_http_app(coordinator, transport_configuration)
-    coordinator.access.announce()
-    uvicorn.run(
-        app,
-        host=transport_configuration.bind_host,
-        port=transport_configuration.port,
-        proxy_headers=False,
-    )
+    run_http_application(app, transport_configuration, coordinator.access)
 
 
 if __name__ == "__main__":

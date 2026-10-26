@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import sys
+import threading
+import time
+import webbrowser
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -25,6 +31,7 @@ from dispenser_conditioning_mcp.recording_service import RecordingService
 
 DEFAULT_HTTP_PATH = "/mcp"
 MAX_HTTP_REQUEST_BODY_BYTES = 256 * 1024
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -118,11 +125,68 @@ def run_configured_transport(
     """Start the HTTP listener; this does not connect to an instrument."""
     app = create_http_app(server, configuration)
     access = getattr(app.state, "dashboard_access", None)
-    if isinstance(access, DashboardAccess):
-        access.announce()
-    uvicorn.run(
+    run_http_application(
         app,
-        host=configuration.bind_host,
-        port=configuration.port,
-        proxy_headers=False,
+        configuration,
+        access if isinstance(access, DashboardAccess) else None,
     )
+
+
+def run_http_application(
+    app: Starlette,
+    configuration: McpTransportConfiguration,
+    access: DashboardAccess | None,
+) -> None:
+    """Run one HTTP app and make one best-effort local GUI bootstrap attempt."""
+
+    if access is not None:
+        access.announce(configuration.port)
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=configuration.bind_host,
+            port=configuration.port,
+            proxy_headers=False,
+        )
+    )
+    cancelled = threading.Event()
+    opener: threading.Thread | None = None
+    if access is not None and _gui_browser_available():
+        opener = threading.Thread(
+            target=_open_console_when_ready,
+            args=(server, access, configuration.port, cancelled),
+            name="operator-console-browser",
+            daemon=True,
+        )
+        opener.start()
+    try:
+        server.run()
+    finally:
+        cancelled.set()
+        if opener is not None:
+            opener.join(timeout=0.5)
+
+
+def _gui_browser_available() -> bool:
+    if sys.platform.startswith("linux"):
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    return sys.platform == "darwin" or os.name == "nt"
+
+
+def _open_console_when_ready(
+    server: uvicorn.Server,
+    access: DashboardAccess,
+    port: int,
+    cancelled: threading.Event,
+) -> None:
+    deadline = time.monotonic() + 30.0
+    while not cancelled.is_set() and time.monotonic() < deadline:
+        if server.started:
+            url = access.bootstrap_url(port)
+            if url is not None:
+                try:
+                    webbrowser.open(url, new=2)
+                except Exception:
+                    LOGGER.warning("Local operator-console browser open failed")
+            return
+        cancelled.wait(0.05)

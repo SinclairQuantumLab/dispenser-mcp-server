@@ -1,5 +1,7 @@
+import asyncio
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -18,7 +20,81 @@ from dispenser_conditioning_mcp.transport import (
 
 
 @pytest.mark.anyio
-async def test_inline_login_reuses_cookie_validation_and_throttle(tmp_path):
+async def test_one_use_bootstrap_fragment_establishes_existing_cookie() -> None:
+    access = DashboardAccess()
+    url = access.bootstrap_url(8123)
+    assert url is not None
+    secret = urlsplit(url).fragment
+    assert secret
+    assert secret != access.token
+    assert secret != access.cookie
+    app = Starlette(routes=access.routes())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, client=("192.0.2.50", 4321)),
+        base_url="http://fixture",
+    ) as client:
+        page = await client.get("/dashboard/bootstrap")
+        assert page.status_code == 200
+        assert page.headers["cache-control"] == "no-store"
+        assert page.headers["referrer-policy"] == "no-referrer"
+        assert secret not in page.text
+        assert access.token not in page.text
+        assert 'href="/dashboard/login"' in page.text
+        assert page.text.index("history.replaceState") < page.text.index("fetch(")
+
+        invalid = await client.post("/dashboard/bootstrap", data={"secret": "wrong"})
+        assert invalid.status_code == 401
+        redeemed = await client.post("/dashboard/bootstrap", data={"secret": secret})
+        assert redeemed.status_code == 204
+        assert "HttpOnly" in redeemed.headers["set-cookie"]
+        assert "SameSite=strict" in redeemed.headers["set-cookie"]
+        assert secret not in redeemed.headers["set-cookie"]
+        assert (await client.get("/dashboard/operator")).status_code == 200
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://fixture"
+    ) as fresh_client:
+        used = await fresh_client.post("/dashboard/bootstrap", data={"secret": secret})
+        assert used.status_code == 401
+        assert "set-cookie" not in used.headers
+
+    restarted = DashboardAccess()
+    restarted_app = Starlette(routes=restarted.routes())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=restarted_app), base_url="http://fixture"
+    ) as restarted_client:
+        stale = await restarted_client.post(
+            "/dashboard/bootstrap", data={"secret": secret}
+        )
+        assert stale.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_bootstrap_redemption_is_atomic() -> None:
+    access = DashboardAccess()
+    url = access.bootstrap_url(8000)
+    assert url is not None
+    secret = urlsplit(url).fragment
+    app = Starlette(routes=access.routes())
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://fixture"
+        ) as first,
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://fixture"
+        ) as second,
+    ):
+        results = await asyncio.gather(
+            first.post("/dashboard/bootstrap", data={"secret": secret}),
+            second.post("/dashboard/bootstrap", data={"secret": secret}),
+        )
+    assert sorted(result.status_code for result in results) == [204, 401]
+
+
+@pytest.mark.anyio
+async def test_inline_login_reuses_cookie_validation_and_throttle(
+    tmp_path: Path,
+) -> None:
     access = DashboardAccess()
     app = Starlette(routes=dashboard_routes(tmp_path, access=access))
     async with httpx.AsyncClient(
@@ -211,8 +287,8 @@ async def test_dashboard_login_does_not_gate_remote_mcp(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_failed_phrase_throttle_expires_without_waiting(
-    tmp_path: Path, monkeypatch
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     now = [100.0]
     monkeypatch.setattr(
         "dispenser_conditioning_mcp.dashboard_access.time.monotonic", lambda: now[0]

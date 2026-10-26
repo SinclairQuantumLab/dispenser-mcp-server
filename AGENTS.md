@@ -213,8 +213,14 @@
   the existing operator boundary. Locked truth must not block ordinary polling.
   Preserve selected runs across login. Leave /mcp independent. Show access phrases in the HTTP startup terminal and dashboard/operator pages for
   passphrase-authenticated viewers; never anonymous
-  remote/login pages, static assets, MCP results,
-  records or URLs. Disable proxy_headers on owned HTTP entrypoints. This excludes
+  remote/login pages, static assets, MCP results, records or URLs. In addition,
+  create one independent process-local bootstrap secret, print it only as the
+  fragment of a loopback console URL, remove that fragment before POST redemption,
+  and atomically consume it before issuing the existing cookie. It expires after
+  one successful redemption or process restart. On GUI hosts, make one best-effort
+  browser-open attempt only after Uvicorn reports ready; skip Linux sessions with
+  neither DISPLAY nor WAYLAND_DISPLAY. Keep the terminal phrase fallback. Disable
+  proxy_headers on owned HTTP entrypoints. This excludes
   uncredentialed tool-only agents; localhost also needs the login cookie for protected
   actions/internal state. Do not use Origin/URL/protocol as additional authorization.
   Never trust socket peer, Host, Forwarded, or X-Forwarded-For for phrase

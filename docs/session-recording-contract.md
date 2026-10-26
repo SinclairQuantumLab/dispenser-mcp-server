@@ -217,11 +217,22 @@ parameters. Cookies cover the shared origin's dashboard/API paths but only dashb
 route guards interpret them; the MCP route ignores them. Secure cookies are used
 when served over HTTPS; this pilot's direct HTTP traffic is not encrypted.
 
+The process also creates one separate random console-bootstrap secret. The
+startup terminal prints it only in the fragment of a loopback URL. The browser
+removes that fragment with `history.replaceState` before sending the secret in a
+bounded POST body. Successful redemption atomically consumes the secret before
+the existing dashboard cookie is issued; reuse and post-restart use are denied.
+The static bootstrap page, HTTP request target, MCP results and run records never
+contain the secret. Treat terminal output and the link as sensitive. After
+Uvicorn reports ready, a GUI host makes one best-effort automatic browser-open
+attempt; Linux without DISPLAY or WAYLAND_DISPLAY skips it. The ordinary phrase
+login remains the fallback.
+
 Owned HTTP entrypoints disable Uvicorn proxy-header trust, but source addresses,
 Host, Forwarded and X-Forwarded-For are not authorization inputs. Anonymous HTTP
 requests never receive the phrase, including requests whose socket peer is
 loopback. `/dashboard/operator` is an authenticated convenience page; initial
-bootstrap uses the startup terminal. This remains valid when an opaque same-host
+phrase/link bootstrap uses the startup terminal. This remains valid when an opaque same-host
 proxy rewrites or strips forwarding headers, without claiming that arbitrary
 proxies are trusted or confidential. The operator must keep the access code,
 authenticated browser context, and startup terminal away from the remote

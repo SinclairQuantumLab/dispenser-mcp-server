@@ -6,6 +6,7 @@ import hmac
 import math
 import secrets
 import sys
+import threading
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -26,18 +27,47 @@ class DashboardAccess:
         replace_random(secrets.SystemRandom())
         self.token = f"{generate_slug(2)}-{secrets.randbelow(100):02d}"
         self.cookie = secrets.token_urlsafe(32)
+        self._bootstrap_secret: str | None = secrets.token_urlsafe(32)
+        self._bootstrap_lock = threading.Lock()
         self.failed_logins: deque[float] = deque(maxlen=5)
 
-    def announce(self) -> None:
+    def announce(self, port: int) -> None:
         print(
             f"Operator dashboard access phrase (valid until restart): {self.token}",
             file=sys.stderr,
         )
+        bootstrap_url = self.bootstrap_url(port)
+        assert bootstrap_url is not None
+        print(
+            "Operator console one-use link (valid until first successful "
+            f"redemption or restart): {bootstrap_url}",
+            file=sys.stderr,
+        )
+
+    def bootstrap_url(self, port: int) -> str | None:
+        with self._bootstrap_lock:
+            secret = self._bootstrap_secret
+        if secret is None:
+            return None
+        return f"http://127.0.0.1:{port}/dashboard/bootstrap#{secret}"
 
     def authorized(self, request: Request) -> bool:
         return hmac.compare_digest(
             request.cookies.get(COOKIE_NAME, "").encode(), self.cookie.encode()
         )
+
+    def _set_cookie(self, response: Response, request: Request) -> None:
+        # The API and assets share the origin at different paths. Only the
+        # dashboard route guards interpret this cookie; MCP ignores it.
+        response.set_cookie(
+            COOKIE_NAME,
+            self.cookie,
+            httponly=True,
+            samesite="strict",
+            secure=request.url.scheme == "https",
+            path="/",
+        )
+        response.headers["Cache-Control"] = "no-store"
 
     def protect(self, endpoint: Endpoint) -> Endpoint:
         async def guarded(request: Request) -> Response:
@@ -109,17 +139,7 @@ class DashboardAccess:
                 if inline
                 else RedirectResponse("/dashboard" + suffix, status_code=303)
             )
-            # The API and assets share the origin at different paths. Only the
-            # dashboard route guards interpret this cookie; MCP ignores it.
-            response.set_cookie(
-                COOKIE_NAME,
-                self.cookie,
-                httponly=True,
-                samesite="strict",
-                secure=request.url.scheme == "https",
-                path="/",
-            )
-            response.headers["Cache-Control"] = "no-store"
+            self._set_cookie(response, request)
             return response
         return HTMLResponse(
             self.login_page("", suffix), headers={"Cache-Control": "no-store"}
@@ -149,8 +169,66 @@ class DashboardAccess:
             headers={"Cache-Control": "no-store"},
         )
 
+    async def bootstrap(self, request: Request) -> Response:
+        headers = {
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if request.method == "GET":
+            return HTMLResponse(self.bootstrap_page(), headers=headers)
+        if request.headers.get("content-type", "").split(";")[0] != (
+            "application/x-www-form-urlencoded"
+        ):
+            return Response(
+                "Bootstrap link unavailable.", status_code=401, headers=headers
+            )
+        body = bytearray()
+        async for part in request.stream():
+            body.extend(part)
+            if len(body) > 512:
+                return Response(
+                    "Bootstrap link unavailable.", status_code=401, headers=headers
+                )
+        supplied = parse_qs(body.decode("utf-8", errors="replace")).get("secret", [""])[
+            0
+        ]
+        with self._bootstrap_lock:
+            expected = self._bootstrap_secret
+            accepted = expected is not None and hmac.compare_digest(
+                supplied.encode(), expected.encode()
+            )
+            if accepted:
+                self._bootstrap_secret = None
+        if not accepted:
+            return Response(
+                "Bootstrap link unavailable.", status_code=401, headers=headers
+            )
+        response = Response(status_code=204, headers=headers)
+        self._set_cookie(response, request)
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = headers["Content-Security-Policy"]
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    @staticmethod
+    def bootstrap_page() -> str:
+        return """<!doctype html><html><head><meta name="referrer" content="no-referrer"><title>Operator console bootstrap</title></head><body><p id="status">Opening the operator console…</p><p><a href="/dashboard/login">Use the ordinary phrase login instead</a></p><noscript>JavaScript is required for this one-use link.</noscript><script>
+let secret=location.hash.slice(1);
+history.replaceState(null,"",location.pathname);
+const status=document.getElementById("status");
+if(!secret){status.textContent="Bootstrap link unavailable. Use the ordinary phrase login.";}
+else{const body=new URLSearchParams({secret});secret="";fetch("/dashboard/bootstrap",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body,credentials:"same-origin",redirect:"error"}).then(response=>{if(!response.ok)throw new Error("denied");location.replace("/console");}).catch(()=>{status.textContent="Bootstrap link unavailable. Use the ordinary phrase login.";});}
+</script></body></html>"""
+
     def routes(self) -> list[Route]:
         return [
             Route("/dashboard/login", self.login, methods=["GET", "POST"]),
             Route("/dashboard/operator", self.operator),
+            Route(
+                "/dashboard/bootstrap",
+                self.bootstrap,
+                methods=["GET", "POST"],
+            ),
         ]
