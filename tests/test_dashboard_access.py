@@ -8,6 +8,9 @@ from test_server_recording import setup
 
 from dispenser_conditioning_mcp.dashboard import dashboard_routes
 from dispenser_conditioning_mcp.dashboard_access import DashboardAccess
+from dispenser_conditioning_mcp.runtime_coordinator import (
+    _console_routes,  # pyright: ignore[reportPrivateUsage]
+)
 from dispenser_conditioning_mcp.transport import (
     McpTransportConfiguration,
     create_http_app,
@@ -49,6 +52,28 @@ async def test_inline_login_reuses_cookie_validation_and_throttle(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_loopback_console_never_discloses_phrase_before_login() -> None:
+    access = DashboardAccess()
+    app = Starlette(routes=_console_routes(access))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 4321)),
+        base_url="http://localhost",
+    ) as client:
+        anonymous = await client.get("/console")
+        assert anonymous.status_code == 200
+        assert 'data-operator-authorized="false"' in anonymous.text
+        assert access.token not in anonymous.text
+        assert (await client.get("/dashboard/operator")).status_code == 403
+
+        logged_in = await client.post("/dashboard/login", data={"code": access.token})
+        assert logged_in.status_code == 303
+        authorized = await client.get("/console")
+        assert 'data-operator-authorized="true"' in authorized.text
+        assert access.token in authorized.text
+        assert access.token in (await client.get("/dashboard/operator")).text
+
+
+@pytest.mark.anyio
 async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path):
     access = DashboardAccess()
     assert re.fullmatch(r"[a-z]+-[a-z]+-\d{2}", access.token)
@@ -82,7 +107,9 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
             )
         ).status_code == 401
         assert access.token not in anonymous_page.text
-        assert (await client.get("/dashboard/operator")).status_code == 403
+        operator_page = await client.get("/dashboard/operator")
+        assert operator_page.status_code == 403
+        assert access.token not in operator_page.text
         assert access.token not in (await client.get("/dashboard/login")).text
         assert (
             await client.post("/dashboard/login", data={"code": "wrong"})
@@ -111,7 +138,9 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
         assert access.token in authorized_page.text
         assert "Dashboard access phrase" in authorized_page.text
         assert authorized_page.headers["cache-control"] == "no-store"
-        assert (await client.get("/dashboard/operator")).status_code == 403
+        operator_page = await client.get("/dashboard/operator")
+        assert operator_page.status_code == 200
+        assert access.token in operator_page.text
         cookies = client.cookies
     restarted = Starlette(routes=dashboard_routes(tmp_path))
     async with httpx.AsyncClient(
@@ -126,13 +155,27 @@ async def test_remote_login_all_routes_restart_and_peer_boundary(tmp_path: Path)
         assert (
             await client.post("/dashboard/login", data={"code": access.token})
         ).status_code == 401
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 4321)),
-        base_url="http://untrusted-host",
-    ) as client:
-        assert (await client.get("/api/session")).status_code == 200
-        assert access.token in (await client.get("/dashboard/operator")).text
-        assert access.token in (await client.get("/dashboard")).text
+    for headers in (
+        {},
+        {
+            "Host": "external.example",
+            "X-Forwarded-For": "192.0.2.50",
+            "Forwarded": "for=192.0.2.50",
+        },
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 4321)),
+            base_url="http://localhost",
+        ) as client:
+            operator_page = await client.get("/dashboard/operator", headers=headers)
+            assert operator_page.status_code == 403
+            assert access.token not in operator_page.text
+            assert access.token not in (await client.get("/dashboard")).text
+
+            client.cookies.set("dispenser_dashboard", "invalid")
+            invalid = await client.get("/dashboard/operator", headers=headers)
+            assert invalid.status_code == 403
+            assert access.token not in invalid.text
 
 
 @pytest.mark.anyio

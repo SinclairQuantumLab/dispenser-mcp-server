@@ -198,15 +198,17 @@ record views. `/api/simulation-state` and management POST routes remain protecte
 anonymous access to those routes receives HTTP 401. Public HTML contains no access
 phrase, cookie or internal-state values. The locked internal section makes no
 repeated protected requests; ordinary plots keep updating. Unlock links preserve
-run selection across login. The login form contains no records or access phrase. `/mcp` is separate:
-its protocol, public results, control checks and lack of MCP caller authentication
-are unchanged. A dashboard login is not hardware-control authorization.
+run selection across login. The login form contains no records or access phrase.
+`/mcp` is separate: its protocol, public results, control checks and lack of MCP
+caller authentication are unchanged. Dashboard login authorizes protected human
+web controls when the active run policy permits; it does not authenticate MCP
+callers or grant agent control.
 
 Each HTTP app starts with a random in-memory access code and separate cookie secret.
-The phrase appears in the startup operator terminal, at `/dashboard/operator`
-for an actual socket-loopback peer, and prominently on the dashboard for loopback
-or already-authenticated remote viewers. Anonymous remote/login pages never show
-it. Server-side rendering inserts it after access checks, with no-store caching;
+The phrase initially appears only in the startup operator terminal and is shown
+subsequently on authenticated dashboard and `/dashboard/operator` pages.
+Anonymous HTTP/login pages never show it. Server-side rendering inserts it after
+access checks, with no-store caching;
 static assets, run records and browser storage do not contain it. Remote login exchanges
 the submitted code for an HttpOnly, SameSite=Strict session cookie. The code is
 reusable during that process, **not a single-redemption OTP**. Restart invalidates
@@ -215,12 +217,15 @@ parameters. Cookies cover the shared origin's dashboard/API paths but only dashb
 route guards interpret them; the MCP route ignores them. Secure cookies are used
 when served over HTTPS; this pilot's direct HTTP traffic is not encrypted.
 
-Owned HTTP entrypoints disable Uvicorn proxy-header trust. Loopback bypass uses the
-actual socket peer, never Host, Forwarded or X-Forwarded-For. Do not put an untrusted
-remote-facing proxy/tunnel in front of a loopback-bypass endpoint and assume this
-preserves isolation: its connections can appear local. The operator must keep the
-access code, authenticated browser context, and startup terminal away from the
-remote conditioning agent. Do not copy codes into reports, logs, URLs or tool input.
+Owned HTTP entrypoints disable Uvicorn proxy-header trust, but source addresses,
+Host, Forwarded and X-Forwarded-For are not authorization inputs. Anonymous HTTP
+requests never receive the phrase, including requests whose socket peer is
+loopback. `/dashboard/operator` is an authenticated convenience page; initial
+bootstrap uses the startup terminal. This remains valid when an opaque same-host
+proxy rewrites or strips forwarding headers, without claiming that arbitrary
+proxies are trusted or confidential. The operator must keep the access code,
+authenticated browser context, and startup terminal away from the remote
+conditioning agent. Do not copy codes into reports, logs, URLs or tool input.
 
 This boundary excludes a remote tool-only agent without credentials. It **does not**
 isolate a same-host full-access agent that can read runs, access loopback, inspect

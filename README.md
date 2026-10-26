@@ -223,13 +223,14 @@ Ordinary dashboard pages, assets, run lists and observation/action/decision data
 are public without login. Internal simulation state and run-management writes
 still require the operator phrase at `/dashboard/login`. The locked internal
 section does not poll or interrupt ordinary plots; unlocking preserves the selected
-saved run. Each HTTP process generates a new code, shown only in its startup
-terminal, server-loopback `/dashboard/operator` page, or already-authorized dashboard. Actual
-loopback connections can retrieve the phrase on the operator page, but must log in
-for protected data and actions. The code is reusable until restart, not a
+saved run. Each HTTP process generates a new code, shown initially only in its
+startup terminal and subsequently on already-authorized dashboard pages. The
+`/dashboard/operator` convenience page also requires the existing login cookie;
+it never trusts loopback source addresses, Host, or forwarded headers. The code
+is reusable until restart, not a
 single-use OTP; it is never an MCP argument or result. Keep it and the resulting
 browser cookie out of the remote decision agent’s context. This does not isolate
-same-host agents with local file, loopback, or terminal access. See the
+same-host agents with access to run files, process memory, or the terminal. See the
 [dashboard access boundary](docs/session-recording-contract.md#operator-dashboard-access).
 
 Use **View run** to switch between the current process and saved runs in `runs/`.
@@ -613,8 +614,9 @@ In the authenticated dashboard, choose **Main list** or **Archive** at any time.
 Rename changes only a display label. Archive/restore changes only list membership.
 Remote management uses the passphrase-established session cookie, not URL,
 protocol or Origin matching. No additional user key is required.
-Localhost also requires login for protected actions/internal state. The local-only
-operator phrase page remains available for login bootstrap, not automatic authorization.
+Localhost also requires login for protected actions/internal state. The operator
+phrase is initially available only in the startup terminal; the phrase page is
+an authenticated convenience, not a bootstrap or automatic authorization path.
 Enter the visible-text phrase in the dashboard's inline login form. Login stays on
 the selected run and preserves chart ranges; the next normal poll enables protected
 controls/data. The separate login page remains a fallback. No phrase is put in URLs

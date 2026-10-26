@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hmac
-import ipaddress
 import math
 import secrets
 import sys
@@ -34,16 +33,6 @@ class DashboardAccess:
             f"Operator dashboard access phrase (valid until restart): {self.token}",
             file=sys.stderr,
         )
-
-    @staticmethod
-    def local(request: Request) -> bool:
-        try:
-            return (
-                request.client is not None
-                and ipaddress.ip_address(request.client.host).is_loopback
-            )
-        except ValueError:
-            return False
 
     def authorized(self, request: Request) -> bool:
         return hmac.compare_digest(
@@ -139,7 +128,7 @@ class DashboardAccess:
     @staticmethod
     def login_page(message: str, suffix: str = "") -> str:
         return (
-            '<!doctype html><html lang="en"><title>Operator dashboard login</title><h1>Unlock internal state and run management</h1><p>Ordinary observations and decisions are public. Ask the operator for this server’s current dashboard access phrase. This login does not authorize MCP or hardware control.</p><p>'
+            '<!doctype html><html lang="en"><title>Operator dashboard login</title><h1>Unlock operator dashboard actions</h1><p>Ordinary observations and decisions are public. Ask the operator for this server’s current dashboard access phrase. Login authorizes protected web settings, human controls, internal state and run management; it does not authenticate MCP callers or grant agent control.</p><p>'
             + escape(message)
             + '</p><form method="post" action="/dashboard/login'
             + escape(suffix, quote=True)
@@ -147,9 +136,11 @@ class DashboardAccess:
         )
 
     async def operator(self, request: Request) -> Response:
-        if not self.local(request):
+        if not self.authorized(request):
             return Response(
-                "Access phrase is shown only on server loopback", status_code=403
+                "Operator login required; the access phrase is printed in the server startup terminal.",
+                status_code=403,
+                headers={"Cache-Control": "no-store"},
             )
         return HTMLResponse(
             '<!doctype html><html lang="en"><title>Dashboard operator access</title><h1>Dashboard operator access</h1><p>Share this code only with the human operator. It is reusable until this HTTP process restarts, not a single-use code.</p><code>'
