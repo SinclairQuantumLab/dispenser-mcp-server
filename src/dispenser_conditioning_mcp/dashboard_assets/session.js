@@ -601,7 +601,6 @@ async function manageRun(operation, input = null) {
     el("management-editor").dataset.operation=operation;
     el("management-label").textContent=deleting ? `Permanently delete ALL run files, including observer files? This cannot be undone. Type folder name: ${runManagement.name}` : "New display name (raw folder and record IDs stay unchanged)";
     el("management-input").value=deleting ? "" : runManagement.display_name || "";
-    el("management-input").maxLength=deleting ? 255 : 120;
     el("management-submit").textContent=deleting ? "Permanently delete" : "Save name";
     el("management-input").focus();return;
   }
@@ -664,7 +663,6 @@ async function refreshRuns() {
   } catch (error) { el("run-help").textContent = error.message + ". Current view is unchanged."; }
 }
 el("run-picker").addEventListener("change", event => {
-  el("management-editor").hidden=true;
   const url = new URL(window.location.href);
   url.searchParams.set("archived",String(collection.value === "archived"));
   if (event.target.value) url.searchParams.set("run",event.target.value);
