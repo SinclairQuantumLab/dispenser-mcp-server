@@ -92,6 +92,8 @@ def test_three_toml_documents_build_one_fixed_policy(tmp_path: Path) -> None:
     assert configuration.siglent.control_enabled is False
     assert configuration.startup.allow_remote_access is False
     assert configuration.startup.port == 8000
+    assert configuration.startup.learning.enabled is False
+    assert configuration.startup.learning.sample_interval_s == 5.0
 
 
 def test_safe_defaults_are_loopback_http_and_control_disabled(tmp_path: Path) -> None:
@@ -105,6 +107,39 @@ def test_safe_defaults_are_loopback_http_and_control_disabled(tmp_path: Path) ->
     assert configuration.startup.control_enabled is False
     assert configuration.startup.allow_remote_access is False
     assert configuration.startup.port == 8000
+
+
+def test_learning_table_is_strict_and_operator_owned(tmp_path: Path) -> None:
+    layout = _write_layout(
+        tmp_path,
+        main_extra="[learning]\nenabled = true\nsample_interval_s = 2.5\n",
+    )
+    configuration = OperatorConfiguration.from_toml(layout)
+    assert configuration.startup.learning.enabled is True
+    assert configuration.startup.learning.sample_interval_s == 2.5
+
+    layout = _write_layout(
+        tmp_path / "bad",
+        main_extra="[learning]\nenabled = false\nunexpected = true\n",
+    )
+    with pytest.raises(ConfigurationError, match="unknown setting"):
+        OperatorConfiguration.from_toml(layout)
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        '[learning]\nenabled = "true"\n',
+        '[learning]\nsample_interval_s = "5"\n',
+        "[learning]\nsample_interval_s = 0.01\n",
+    ],
+)
+def test_learning_settings_reject_wrong_types_and_range(
+    tmp_path: Path, table: str
+) -> None:
+    layout = _write_layout(tmp_path, main_extra=table)
+    with pytest.raises(ConfigurationError):
+        OperatorConfiguration.from_toml(layout)
 
 
 @pytest.mark.parametrize(

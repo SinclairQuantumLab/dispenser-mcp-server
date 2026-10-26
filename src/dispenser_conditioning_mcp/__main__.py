@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 import sys
 
-from dispenser_conditioning_mcp.backend import create_startup_server
+import uvicorn
+
 from dispenser_conditioning_mcp.config import ConfigurationError
-from dispenser_conditioning_mcp.transport import (
-    run_configured_transport,
+from dispenser_conditioning_mcp.runtime_coordinator import (
+    RuntimeCoordinator,
+    bootstrap_transport,
+    create_runtime_http_app,
 )
 
 
@@ -21,12 +24,20 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     try:
-        mcp, transport_configuration = create_startup_server(check_hardware=True)
+        transport_configuration = bootstrap_transport()
+        coordinator = RuntimeCoordinator()
     except ConfigurationError as error:
         print(f"Configuration error: {error}", file=sys.stderr)
         raise SystemExit(2) from error
 
-    run_configured_transport(mcp, transport_configuration)
+    app = create_runtime_http_app(coordinator, transport_configuration)
+    coordinator.access.announce()
+    uvicorn.run(
+        app,
+        host=transport_configuration.bind_host,
+        port=transport_configuration.port,
+        proxy_headers=False,
+    )
 
 
 if __name__ == "__main__":

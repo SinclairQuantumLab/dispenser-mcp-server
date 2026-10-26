@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shutil
 import socket
@@ -9,13 +8,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-import httpx
 import pytest
 from mcp import Client
 
 
 @pytest.mark.anyio
-async def test_independent_source_copy_runs_simulator_over_http(tmp_path: Path):
+async def test_independent_source_copy_starts_idle_without_hardware_imports(
+    tmp_path: Path,
+):
     source = Path(__file__).resolve().parents[1]
     clone = tmp_path / "arbitrary-independent-checkout"
     shutil.copytree(
@@ -47,7 +47,6 @@ main()
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    results = []
     try:
         for _ in range(150):
             assert process.poll() is None, "Isolated HTTP startup failed"
@@ -67,63 +66,12 @@ main()
             Client(f"http://127.0.0.1:{port}/mcp") as client,
         ):
             catalog = (await client.list_tools()).tools
-            assert len(catalog) == 11
-            schemas = {tool.name: tool.input_schema for tool in catalog}
-            assert (
-                schemas["read_vacuum_pressure"]["properties"]["elapsed_s"]["maximum"]
-                == 86400
-            )
-            assert "elapsed_s" not in schemas["shutdown_dispenser_power"]["properties"]
-            for tool in ("read_vacuum_pressure", "read_dispenser_power_state"):
-                results.append(
-                    await client.call_tool(
-                        tool,
-                        {"elapsed_s": 90} if tool == "read_vacuum_pressure" else {},
-                    )
-                )
-            pressure = results[0].structured_content
-            assert pressure is not None
-            assert pressure["timing"]["requested_elapsed_s"] == 90
-            assert pressure["timing"]["advanced_s"] >= 90
-            rejected = await client.call_tool("prepare_dispenser_power", {})
-            assert rejected.is_error
-            results.append(rejected)
-            results.append(await client.call_tool("shutdown_dispenser_power", {}))
-            final = await client.call_tool("read_dispenser_power_state", {})
-            results.append(final)
-            assert final.structured_content is not None
-            assert final.structured_content["output_enabled"] is False
-            assert final.structured_content["commanded_load_current_limit_a"] == 0
-            assert final.structured_content["simulated"] is True
-            assert (
-                final.structured_content["safety_limits"]["fixed_compliance_voltage_v"]
-                == 1.0
-            )
-        async with httpx.AsyncClient() as browser:
-            assert (
-                await browser.get(f"http://127.0.0.1:{port}/dashboard")
-            ).status_code == 200
+            assert [tool.name for tool in catalog] == ["read_server_status"]
+            status = await client.call_tool("read_server_status", {})
+            assert status.structured_content is not None
+            assert status.structured_content["lifecycle"] == "idle"
+            assert status.structured_content["active_run"] is None
     finally:
         process.terminate()
         process.wait(timeout=5)
-    directories = list((clone / "runs").iterdir())
-    assert len(directories) == 1
-    directory = directories[0]
-    events = [
-        json.loads(line)
-        for line in (directory / "events.jsonl").read_text().splitlines()
-    ]
-    call_ids = {event["call_id"] for event in events}
-    assert len(call_ids) == len(results) == 5
-    assert len([event for event in events if event["kind"] == "call_result"]) == 5
-    assert (directory / "observer.jsonl").is_file()
-    assert (
-        json.loads((directory / "observer-link.json").read_text())["observer_file"]
-        == "observer.jsonl"
-    )
-    session_ids = {
-        result.meta["dispenser_conditioning"]["session_id"]
-        for result in results
-        if result.meta
-    }
-    assert len(session_ids) == 1
+    assert not (clone / "runs").exists()

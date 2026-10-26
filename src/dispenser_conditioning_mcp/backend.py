@@ -47,6 +47,7 @@ def create_startup_server(
         "expected_serial_number",
         "compliance_voltage_v",
         "control_enabled",
+        "learning",
     }
     if set(document) - allowed:
         raise ConfigurationError("Invalid simulation startup document")
@@ -62,4 +63,5 @@ def create_startup_server(
         document.get("simulation", {}),
         layout=layout,
         max_load_current_A=parse_max_load_current(document),
+        learning=document.get("learning"),
     ), McpTransportConfiguration(remote, port)

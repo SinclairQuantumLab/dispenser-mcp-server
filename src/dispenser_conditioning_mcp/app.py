@@ -6,6 +6,12 @@ from mcp.server import MCPServer
 
 from dispenser_conditioning_mcp.config import OperatorConfiguration
 from dispenser_conditioning_mcp.hicube import HiCubeNeoPressureSource
+from dispenser_conditioning_mcp.learning_mode import (
+    LearningModeService,
+    SerializedHardwareBackend,
+)
+from dispenser_conditioning_mcp.recording_service import RecordingService
+from dispenser_conditioning_mcp.run_directory import new_run_directory
 from dispenser_conditioning_mcp.server import create_server
 from dispenser_conditioning_mcp.siglent import DispenserPowerController
 
@@ -32,9 +38,28 @@ def create_configured_server(
         from dispenser_conditioning_mcp.startup_check import check_connections
 
         check_connections(source, power_controller)
-    return create_server(
+    recording = RecordingService(
+        directory=new_run_directory(
+            "hardware", runs_directory=operator.layout.project_root / "runs"
+        )
+    )
+    backend = SerializedHardwareBackend(
         source,
         power_controller,
+        control_enabled=operator.startup.control_enabled,
+    )
+    learning = LearningModeService(
+        operator.startup.learning,
+        recording,
+        backend,
+        acceptance_context=operator.startup.acceptance_context,
+        control_enabled=operator.startup.control_enabled,
+    )
+    return create_server(
+        backend,
+        backend,
+        recording=recording,
+        learning=learning,
         reload_current_limit=lambda: power_controller.reload_current_limit(
             operator.layout
         ),

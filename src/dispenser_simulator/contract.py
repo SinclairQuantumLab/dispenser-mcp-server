@@ -382,6 +382,13 @@ def _power_output_schema() -> dict[str, Any]:
         "commanded_load_current_limit_a": {"type": "number"},
         "native_voltage_measurement_v": {"type": "number"},
         "native_current_measurement_a": {"type": "number"},
+        "measured_ch2_current_a": {"type": "number"},
+        "measured_ch2_voltage_v": {"type": "number"},
+        "measured_parallel_load_current_a": {"type": "number"},
+        "measurement_acquisition": {
+            "type": "string",
+            "const": "synthetic_symmetric_model",
+        },
         "native_power_measurement_w": {"type": "number"},
         "output_enabled": {"type": "boolean"},
         "regulation_mode": {"type": "string"},

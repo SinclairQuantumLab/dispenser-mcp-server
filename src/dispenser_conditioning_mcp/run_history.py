@@ -28,9 +28,15 @@ SAFE_METADATA = {
 
 
 class RunCatalog:
-    def __init__(self, current: Path, *, protect_current: bool = True) -> None:
+    def __init__(
+        self,
+        current: Path,
+        *,
+        protect_current: bool = True,
+        root: Path | None = None,
+    ) -> None:
         self.current = current.resolve()
-        self.root = run_directory.RUNS_DIRECTORY.resolve()
+        self.root = (run_directory.RUNS_DIRECTORY if root is None else root).resolve()
         self.protect_current = protect_current
 
     def resolve(self, key: str) -> Path:
@@ -161,9 +167,14 @@ class RunHistory:
         self, current: Path, *, completion_recorded: Callable[[], bool] = lambda: False
     ) -> None:
         self.completion_recorded = completion_recorded
-        self.catalog = RunCatalog(current)
+        self.catalog = RunCatalog(current, root=current.parent)
         self.readers: dict[Path, Any] = {}
         self.observers: dict[Path, Any] = {}
+
+    def mark_saved(self) -> None:
+        """Treat the formerly live run as saved without changing its records."""
+
+        self.catalog.protect_current = False
 
     @staticmethod
     def tools() -> list[Tool]:
@@ -265,7 +276,10 @@ class RunHistory:
                 ):
                     raise ValueError("Invalid history cursor")
                 if name == "read_saved_simulation_state":
-                    if path == self.catalog.current and not self.completion_recorded():
+                    current = (
+                        self.catalog.protect_current and path == self.catalog.current
+                    )
+                    if current and not self.completion_recorded():
                         raise ValueError(
                             "Current-process simulation internal state requires a successfully recorded completion"
                         )
@@ -279,7 +293,7 @@ class RunHistory:
                     data.pop("source", None)
                     data["review_mode"] = (
                         "completed_current_simulation_hindsight_not_live_observation"
-                        if path == self.catalog.current
+                        if current
                         else "saved_simulation_hindsight_not_live_observation"
                     )
                     data["human_only"] = False

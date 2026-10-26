@@ -206,7 +206,7 @@ async def test_native_history_bypasses_instrument_and_experiment_recording(tmp_p
         else b""
     )
     async with Client(server) as client:
-        assert len((await client.list_tools()).tools) == 11
+        assert len((await client.list_tools()).tools) == 15
         assert not (await client.call_tool("read_conditioning_run", {})).is_error
         assert (await client.call_tool("read_saved_simulation_state", {})).is_error
     after = (

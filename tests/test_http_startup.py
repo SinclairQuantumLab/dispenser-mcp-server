@@ -53,10 +53,10 @@ class Channel:
 
 class Measure:
     def voltage(self, channel):
-        assert channel == "CH1"
+        assert channel in {"CH1", "CH2"}
         return 0.0
     def current(self, channel):
-        assert channel == "CH1"
+        assert channel in {"CH1", "CH2"}
         return 0.0
     def power(self, channel):
         assert channel == "CH1"
@@ -192,7 +192,7 @@ run_configured_transport(server, transport)
         process.terminate()
         process.wait(timeout=5)
 
-    assert len(tools) == 7
+    assert len(tools) == 15
     assert pressure_result.is_error is False
     assert pressure_result.structured_content is not None
     assert pressure_result.structured_content["pressure_mbar"] == 4.0e-7

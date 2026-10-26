@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from collections.abc import Mapping
@@ -32,9 +33,18 @@ from .contract import recording_tool_specs
 from .model import SimulationError, ToolRouter
 
 
-def create_recording_service(environment: Mapping[str, str]) -> RecordingService:
+def create_recording_service(
+    environment: Mapping[str, str], *, layout: SourceLayout | None = None
+) -> RecordingService:
     configured = environment.get("DISPENSER_SIM_SESSION_DIRECTORY")
-    directory = Path(configured) if configured else new_run_directory("simulation")
+    directory = (
+        Path(configured)
+        if configured
+        else new_run_directory(
+            "simulation",
+            runs_directory=(layout.project_root / "runs") if layout else None,
+        )
+    )
     if not directory.is_absolute():
         raise ValueError("Simulator session directory must be absolute")
     recorder = SessionRecorder(
@@ -58,6 +68,7 @@ class RecordingAdapter:
         self.layout = layout
         self.router = router
         self.service = service
+        self._operation_lock = asyncio.Lock()
         self.catalog = recording_tool_specs(router.simulator.config.acceptance_context)
         self.catalog.append(
             {
@@ -106,6 +117,12 @@ class RecordingAdapter:
     async def call(
         self, name: str, arguments: Mapping[str, Any] | None
     ) -> CallToolResult:
+        async with self._operation_lock:
+            return await self._call_locked(name, arguments)
+
+    async def _call_locked(
+        self, name: str, arguments: Mapping[str, Any] | None
+    ) -> CallToolResult:
         args = dict(arguments or {})
         schema = self._schemas.get(name)
         rejection = None
@@ -129,6 +146,14 @@ class RecordingAdapter:
             rejection=rejection,
             request_virtual_time_s=self.router.simulator.state.virtual_time_s,
         )
+
+    async def execute_unrecorded(
+        self, name: str, arguments: Mapping[str, Any] | None = None
+    ) -> CallToolResult:
+        """Run one serialized domain call; the learning owner records it once."""
+
+        async with self._operation_lock:
+            return await self._dispatch(name, dict(arguments or {}))
 
     async def _dispatch(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
         if name == RELOAD_CURRENT_LIMIT_TOOL:

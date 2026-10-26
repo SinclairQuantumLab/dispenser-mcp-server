@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import uvicorn
@@ -15,6 +17,10 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from dispenser_conditioning_mcp.config import McpStartupConfiguration
 from dispenser_conditioning_mcp.dashboard import dashboard_routes
 from dispenser_conditioning_mcp.dashboard_access import DashboardAccess
+from dispenser_conditioning_mcp.learning_mode import (
+    LearningModeService,
+    learning_routes,
+)
 from dispenser_conditioning_mcp.recording_service import RecordingService
 
 DEFAULT_HTTP_PATH = "/mcp"
@@ -86,6 +92,23 @@ def create_http_app(
         access = DashboardAccess()
         app.state.dashboard_access = access
         app.router.routes.extend(dashboard_routes(recording.directory, access=access))
+        learning = getattr(server, "learning", None)
+        if isinstance(learning, LearningModeService):
+            app.router.routes.extend(learning_routes(learning, access))
+            original_lifespan = app.router.lifespan_context
+
+            @asynccontextmanager
+            async def learning_lifespan(
+                application: Starlette,
+            ) -> AsyncGenerator[None]:
+                async with original_lifespan(application):
+                    await learning.start()
+                    try:
+                        yield
+                    finally:
+                        await learning.stop()
+
+            app.router.lifespan_context = learning_lifespan
     return app
 
 

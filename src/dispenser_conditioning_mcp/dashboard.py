@@ -36,11 +36,12 @@ def dashboard_routes(
     observer_file: Path | None = None,
     replay: bool = False,
     access: DashboardAccess | None = None,
+    run_root: Path | None = None,
 ) -> list[BaseRoute]:
     from dispenser_conditioning_mcp.run_history import RunCatalog
 
     access = access or DashboardAccess()
-    catalog = RunCatalog(directory, protect_current=not replay)
+    catalog = RunCatalog(directory, protect_current=not replay, root=run_root)
     directory = directory.resolve()
     readers: dict[Path, tuple[SessionTail, SimulationObserverReader]] = {}
 
@@ -183,6 +184,13 @@ def dashboard_routes(
             headers={"Cache-Control": "no-store"},
         )
 
+    async def learning_script(request: Request) -> Response:
+        return FileResponse(
+            assets / "learning.js",
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
+
     async def plotly(request: Request) -> Response:
         return FileResponse(
             assets / "vendor" / "plotly-basic-4.0.0.min.js",
@@ -197,6 +205,7 @@ def dashboard_routes(
         Route("/dashboard", page),
         Route("/session.js", script),
         Route("/inline-login.js", inline_login_script),
+        Route("/learning.js", learning_script),
         Route("/vendor/plotly-basic-4.0.0.min.js", plotly),
         Route("/api/runs", run_list),
         Route("/api/runs/{operation}", manage_run, methods=["POST"]),
@@ -242,6 +251,25 @@ def dashboard_record(event: dict[str, Any]) -> dict[str, Any]:
     view = {key: value for key, value in event.items() if key != "payload"}
     payload = as_dict(event.get("payload"))
     result = as_dict(payload.get("result"))
+    if event.get("kind") == "external_change_detected":
+        view.update(
+            {
+                "actor": payload.get("actor", "learning_sampler"),
+                "tool": payload.get("tool"),
+                "change_source": payload.get("source"),
+                "intent_known": payload.get("intent_known"),
+                "exact_change_time_known": payload.get("exact_change_time_known"),
+                "observation_interval_started_at": payload.get(
+                    "observation_interval_started_at"
+                ),
+                "detected_at": payload.get("detected_at"),
+                "previous_observed_at": payload.get("previous_observed_at"),
+                "current_observed_at": payload.get("current_observed_at"),
+                "changed_fields": payload.get("changed_fields"),
+                "previous_values": payload.get("previous_values"),
+                "detected_values": payload.get("detected_values"),
+            }
+        )
     for _, row in projections(event):
         view.update(row)
     view.pop("arguments_json", None)

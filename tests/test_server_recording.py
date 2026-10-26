@@ -160,7 +160,7 @@ async def test_shared_http_app_serves_browser_routes_and_records_without_wrapper
             "/dashboard", headers={"Origin": "http://127.0.0.1:8000"}
         )
         assert browser.status_code == 200
-        assert "MCP records the requests and readings" in browser.text
+        assert "MCP records observations" in browser.text
         blocked = await http.post(
             "/mcp", headers={"Origin": "http://127.0.0.1:8000"}, json={}
         )

@@ -1,0 +1,22 @@
+# Example nonsecret preferences managed atomically by the authenticated web console.
+# The actual console-settings.toml is ignored. Prefer editing through /console.
+backend = "hardware" # hardware or simulation
+authority_mode = "human_learning" # human_learning or agent_control
+control_enabled = false # permission only; never enables an output by itself
+acceptance_context = "production_dispenser" # production_dispenser or no_load_test
+expected_serial_number = "<SERIAL_NUMBER>" # required only for hardware
+compliance_voltage_v = 1.0 # explicit per-run volts, 0.001 V resolution
+max_load_current_A = 4.8 # combined load-current cap, >0 through 6.4 A
+sample_interval_s = 5.0 # real-wall acquisition interval, 0.1 through 3600 s
+
+[hardware]
+hicube_host = "<HICUBE_HOST>" # required only for hardware; no scheme or port
+hicube_port = 4840
+hicube_timeout_s = 5.0
+siglent_identifier = "<SIGLENT_GATEWAY_HOST_AND_OPTIONAL_PORT>" # hardware only
+siglent_timeout_s = 5.0
+siglent_minimum_command_interval_ms = 100.0
+
+[simulation]
+seed = "operator-private-seed"
+scenario = "nominal_recovery"

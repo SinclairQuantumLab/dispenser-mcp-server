@@ -27,6 +27,11 @@ from dispenser_conditioning_mcp.domain import (
     VacuumPressureObservation,
     normalize_observation,
 )
+from dispenser_conditioning_mcp.learning_mode import (
+    AGENT_INSTRUMENT_MUTATIONS,
+    LEARNING_AGENT_TOOLS,
+    LearningModeService,
+)
 from dispenser_conditioning_mcp.power_domain import (
     NO_LOAD_TEST_CONFIRMATION,
     PRODUCTION_PARALLEL_CONNECTION_CONFIRMATION,
@@ -85,10 +90,12 @@ class DispenserConditioningMCPServer(MCPServer[None]):
         instructions: str,
         tool_arguments: Mapping[str, frozenset[str]],
         recording: RecordingService,
+        learning: LearningModeService,
     ) -> None:
         super().__init__(name, instructions=instructions)
         self._tool_arguments = dict(tool_arguments)
         self.recording = recording
+        self.learning = learning
         self.history = RunHistory(
             recording.directory,
             completion_recorded=lambda: recording.completion_recorded,
@@ -96,9 +103,11 @@ class DispenserConditioningMCPServer(MCPServer[None]):
 
     async def list_tools(self) -> list[Tool]:
         tools = await super().list_tools()
-        return [
-            self._strict_input_schema(tool) for tool in tools
-        ] + self.history.tools()
+        return (
+            [self._strict_input_schema(tool) for tool in tools]
+            + self.history.tools()
+            + self.learning.tools()
+        )
 
     async def call_tool(
         self,
@@ -108,13 +117,18 @@ class DispenserConditioningMCPServer(MCPServer[None]):
     ) -> CallToolResult | InputRequiredResult:
         if name in HISTORY_TOOLS:
             return await self.history.call(name, arguments)
+        if name in LEARNING_AGENT_TOOLS:
+            return await self.learning.call_agent_tool(name, arguments)
         allowed = self._tool_arguments.get(name)
         rejection = None
+        learning_rejection = self.learning.agent_mutation_rejection(name)
+        if learning_rejection is not None:
+            rejection = learning_rejection
         if allowed is not None:
             unknown = set(arguments).difference(allowed)
             if name == SHUTDOWN_POWER_TOOL:
                 unknown.discard("action_context")
-            if unknown:
+            if unknown and rejection is None:
                 rejection = f"Not executed: {name} received an unsupported argument."
 
         async def dispatch(
@@ -137,9 +151,14 @@ class DispenserConditioningMCPServer(MCPServer[None]):
                 )
             return result
 
-        return await self.recording.process_call(
-            name, arguments, dispatch, rejection=rejection
-        )
+        async def process_recorded_call() -> CallToolResult:
+            return await self.recording.process_call(
+                name, arguments, dispatch, rejection=rejection
+            )
+
+        if name in AGENT_INSTRUMENT_MUTATIONS:
+            return await self.learning.process_agent_mutation(process_recorded_call)
+        return await process_recorded_call()
 
     def _strict_input_schema(self, tool: Tool) -> Tool:
         if tool.name not in self._tool_arguments:
@@ -155,6 +174,7 @@ def create_server(
     recording: RecordingService | None = None,
     reload_current_limit: Callable[[], CurrentLimitReloadResult] | None = None,
     initial_max_load_current_A: float = 4.8,
+    learning: LearningModeService | None = None,
 ) -> DispenserConditioningMCPServer:
     """Build the MCP server around explicitly injected integrations."""
 
@@ -168,12 +188,18 @@ def create_server(
     tool_arguments[ENABLE_OUTPUT_TOOL] = frozenset(
         {confirmation_argument, "action_context"}
     )
+    recording = recording or RecordingService()
+    learning = learning or LearningModeService.disabled(
+        recording, acceptance_context=acceptance_context
+    )
     server = DispenserConditioningMCPServer(
         "Dispenser Conditioning",
         instructions=_server_instructions(acceptance_context)
-        + f" Initial operator combined-load current cap: {initial_max_load_current_A:g} A (effective {effective_load_current_limit(initial_max_load_current_A):g} A; software maximum {MAX_CONFIGURABLE_LOAD_CURRENT_A:g} A; SPD parallel maximum {SPD_PARALLEL_CURRENT_MAX_A:g} A). Operator may edit max_load_current_A and reload_dispenser_current_limit applies only that field. Cached schemas retain absolute bounds; state/reload results report the current cap.",
+        + f" Initial operator combined-load current cap: {initial_max_load_current_A:g} A (effective {effective_load_current_limit(initial_max_load_current_A):g} A; software maximum {MAX_CONFIGURABLE_LOAD_CURRENT_A:g} A; SPD parallel maximum {SPD_PARALLEL_CURRENT_MAX_A:g} A). Operator may edit max_load_current_A and reload_dispenser_current_limit applies only that field. Cached schemas retain absolute bounds; state/reload results report the current cap."
+        + learning.instruction_suffix(),
         tool_arguments=tool_arguments,
-        recording=recording or RecordingService(),
+        recording=recording,
+        learning=learning,
     )
 
     @server.tool(

@@ -227,6 +227,10 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
         "list_conditioning_runs",
         "read_conditioning_run",
         "read_saved_simulation_state",
+        "read_learning_mode_status",
+        "append_conditioning_run_review",
+        "read_conditioning_run_reviews",
+        "read_conditioning_run_notes",
     ]
     for tool in tools:
         assert tool.input_schema["additionalProperties"] is False
@@ -323,6 +327,10 @@ async def test_tool_catalog_is_closed_and_annotations_are_conservative() -> None
             "list_conditioning_runs",
             "read_conditioning_run",
             "read_saved_simulation_state",
+            "read_learning_mode_status",
+            "append_conditioning_run_review",
+            "read_conditioning_run_reviews",
+            "read_conditioning_run_notes",
         }
     )
     assert annotations("reload_dispenser_current_limit").open_world_hint is False

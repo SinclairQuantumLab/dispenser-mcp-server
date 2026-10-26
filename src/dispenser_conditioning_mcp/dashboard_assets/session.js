@@ -156,7 +156,7 @@ let selectedId = null, truthRevision = null, truthRows = [];
 let truthCursor=0, truthGeneration=-1, truthMore=false, truthData=null;
 let pollRunning=false, pollTimer=null;
 const shortId = id => recordNumbers.has(id) ? "#" + String(recordNumbers.get(id)).padStart(3, "0") : "Unloaded record";
-const actor = () => ({agent:"Agent",scripted:"Script",human:"Human"})[metadata.source] || "Caller";
+const actor = (event = {}) => ({agent:"Agent",scripted:"Script",human:"Human",learning_sampler:"MCP sampler"})[event.actor || metadata.source] || "Caller";
 const toolLabel = name => ({
 read_vacuum_pressure:"Read vacuum pressure",read_dispenser_power_state:"Read power state",
 prepare_dispenser:"Prepare dispenser",prepare_dispenser_power:"Prepare dispenser power",
@@ -166,7 +166,9 @@ reload_dispenser_current_limit:"Reload operator current cap (no actuation)",
 record_conditioning_decision:"Record a judgment (no hardware action)"
 })[name] || (name || "Record").replaceAll("_"," ");
 function outcome(event) {
-  if (event.kind === "decision") return actor() + " decision";
+  if (event.kind === "external_change_detected") return "Setting change observed";
+  if (event.kind === "human_action_context") return "Human action context recorded";
+  if (event.kind === "decision") return actor(event) + " decision";
   if (event.kind === "call_intent") return "Requested";
   const execution = event.execution;
   if (execution === "not_executed") return "Not executed";
@@ -214,11 +216,15 @@ function selectEvent(id, jump = false) {
   const statedReason = decision?.rationale_summary;
   const supportingIds = decision?.basis_event_ids ?? [];
   const args = event.requested_arguments || {};
+  if(event.kind === "external_change_detected") {
+    readable.append(text("p", `An external setting change was detected between ${event.observation_interval_started_at || "an unknown prior time"} and ${event.detected_at || event.recorded_at}. Its exact action time, operator and reason are unknown.`));
+    readable.append(text("p", (event.changed_fields || []).map(key => `${key}: ${JSON.stringify(event.previous_values?.[key])} → ${JSON.stringify(event.detected_values?.[key])}`).join(" · ")));
+  }
   readable.append(text("p", usageText(decision?.token_usage_id ? {usage_id:decision.token_usage_id,total_tokens:decision.total_tokens,input_tokens:decision.input_tokens,output_tokens:decision.output_tokens,cached_input_tokens:decision.cached_input_tokens,model:decision.token_model} : null), "muted"));
   if(decision?.background) readable.append(text("p","Background: "+decision.background));
   if(decision?.confidence_claim) readable.append(text("p","Caller confidence: "+decision.confidence_value+" in claim: "+decision.confidence_claim));
-  if(decision?.completion_outcome) readable.append(text("p",actor()+" assessment: "+decision.completion_outcome+" · Dispenser response: "+decision.dispenser_response+" (not proof of output OFF)."));
-  if (chosenAction) readable.append(text("p", actor() + " chose: " + chosenAction));
+  if(decision?.completion_outcome) readable.append(text("p",actor(decision)+" assessment: "+decision.completion_outcome+" · Dispenser response: "+decision.dispenser_response+" (not proof of output OFF)."));
+  if (chosenAction) readable.append(text("p", actor(decision) + " chose: " + chosenAction));
   if (statedReason) readable.append(text("p", "Stated reason: " + statedReason));
   if(num(event.applied_max_load_current_A)!==null) readable.append(text("p", "Operator current cap: "+fmt(event.previous_max_load_current_A)+" → "+fmt(event.applied_max_load_current_A)+" A; effective "+fmt(event.effective_max_load_current_A)+" A. "+event.notice));
   if(event.error) readable.append(text("p","MCP error: "+event.error,"error"));
@@ -323,11 +329,11 @@ function updatePanels() {
   el("decisions").replaceChildren();
   for (const row of [...decisions].reverse()) {
     const card = text("article", "", "card"); card.dataset.record = row.event_id;
-    card.append(text("small", `${shortId(row.event_id)} · ${actor()} decision: ${row.decision_at || "not supplied"} · MCP receipt: ${row.received_at || row.recorded_at}`), text("h3", row.chosen_action), text("p", row.rationale_summary));
+    card.append(text("small", `${shortId(row.event_id)} · ${actor(row)} decision: ${row.decision_at || "not supplied"} · MCP receipt: ${row.received_at || row.recorded_at}`), text("h3", row.chosen_action), text("p", row.rationale_summary));
     card.append(text("p", usageText(row.token_usage_id ? {usage_id:row.token_usage_id,total_tokens:row.total_tokens,input_tokens:row.input_tokens,output_tokens:row.output_tokens,cached_input_tokens:row.cached_input_tokens,model:row.token_model}:null), "muted"));
     if (row.background) card.append(text("p", row.background, "muted"));
     if (row.confidence_claim) card.append(text("p", `Self-reported confidence: ${row.confidence_value ?? "unknown"} · Claim: ${row.confidence_claim}`, "muted"));
-    if (row.completion_outcome) card.append(text("p", `${actor()} assessment: ${row.completion_outcome} · Dispenser response: ${row.dispenser_response}. This assessment does not confirm output OFF or successful activation.`, "banner"));
+    if (row.completion_outcome) card.append(text("p", `${actor(row)} assessment: ${row.completion_outcome} · Dispenser response: ${row.dispenser_response}. This assessment does not confirm output OFF or successful activation.`, "banner"));
     const links = text("div", "", "links"); links.append(eventButton(row.event_id, "Decision record"));
     for (const id of (row.basis_event_ids || [])) links.append(eventButton(id, `Supporting observation ${shortId(id)} ↗`));
     card.append(links); el("decisions").append(card);
@@ -337,7 +343,7 @@ function updatePanels() {
   for (const event of events.filter(e => e.kind !== "decision").reverse()) {
     const failed = event.kind === "call_error" || event.is_error === true;
     const line = text("div", "", "event"); line.dataset.record = event.event_id;
-    line.append(eventButton(event.event_id, `${shortId(event.event_id)} · ${event.kind === "call_intent" ? actor() + " → MCP" : "MCP → " + actor()} · ${toolLabel(event.tool)} · ${outcome(event)} · ${event.recorded_at}`));
+    line.append(eventButton(event.event_id, `${shortId(event.event_id)} · ${event.kind === "call_intent" ? actor(event) + " → MCP" : "MCP → " + actor(event)} · ${toolLabel(event.tool)} · ${outcome(event)} · ${event.recorded_at}`));
     if (failed) line.classList.add("error");
     el("events").append(line);
   }
@@ -464,16 +470,17 @@ async function poll() {
     const simulated = metadata.session_kind === "simulated", live = metadata.session_kind === "live";
     el("mode").className = "mode-strip" + (live ? " live" : "");
     el("mode").replaceChildren(text("div", simulated ? "◈ SIMULATION" : live ? "◆ LIVE HARDWARE" : "? FIXTURE / SOURCE UNKNOWN"), text("small", live ? "Hardware-source recording. This banner does NOT mean output is energized or measurements are current." : "Simulated equipment only — no real equipment is connected to this recording."));
-    el("decision-heading").textContent = actor() + " decisions and reasons";
+    el("decision-heading").textContent = "Decisions and reasons · attributed per record";
     el("title").textContent = metadata.label || "Observations, actions, decisions";
-    el("provenance").textContent = metadata.session_kind ? `Requests and decisions from: ${actor()}` : "Waiting to learn who made the requests.";
+    el("provenance").textContent = metadata.session_kind ? `Initial caller: ${actor()} · Individual records identify agent, human or independent MCP sampling.` : "Waiting to learn who made the requests.";
     el("session-details").textContent = `Session ${metadata.session_id || "not available"} · ${metadata.session_kind || "unknown source"}. ${metadata.session_kind === "live" ? "Hardware-source records do not establish current output state." : "Synthetic, uncalibrated data; not hardware evidence. Scripted demonstrations are not AI blind runs."}`;
-    el("decision-caption").textContent = `Reasons submitted by ${actor()} with links to the readings used.`;
+    el("decision-caption").textContent = "Submitted reasons with their recorded actor and links to the readings used.";
     el("provenance").className = metadata.session_kind && metadata.session_kind !== "live" ? "banner synthetic" : "banner";
     el("source").textContent = `${data.recording_view === "saved_recording" ? "SAVED RECORDING / REPLAY VIEW" : "PROCESS SESSION RECORDS"} · File checked ${new Date().toISOString()} · ${changed ? "Records updated" : "No new records this check"} · Read-only source: ${data.source || "not configured"}`;
     const lastObservation = observations.at(-1);
     const observedAgo = lastObservation ? Math.max(0, (Date.now() - Date.parse(lastObservation.recorded_at)) / 1000) : null;
-    el("observation-age").textContent = lastObservation ? `Last source observation: ${lastObservation.observed_at || "unavailable"} · Received/recorded ${Math.floor(observedAgo)} s ago. New observations appear only when a caller invokes a reading or action; this page does not measure.` : "No observation yet. This dashboard does not sample instruments.";
+    el("observation-age").textContent = lastObservation ? `Last source observation: ${lastObservation.observed_at || "unavailable"} · Received/recorded ${Math.floor(observedAgo)} s ago. This page reads MCP records; it does not trigger measurements.` : "No observation yet. This dashboard does not sample instruments.";
+    document.dispatchEvent(new CustomEvent("dashboard-session-update", {detail:{operatorAuthorized,metadata}}));
     el("status").textContent = `${data.has_more ? "Loading history" : "Caught up · waiting for new records"} · ${events.length} records · ${observations.length} readings · ${controls.filter(c => c.phase === "call_intent").length} power requests · ${decisions.length} decisions${data.message ? "\n" + data.message : ""}${data.errors ? `\n${data.errors} unreadable record(s): ${data.last_error}` : ""}`;
     el("status").className = data.status === "error" || data.errors ? "error" : "";
     if (changed) updatePanels();

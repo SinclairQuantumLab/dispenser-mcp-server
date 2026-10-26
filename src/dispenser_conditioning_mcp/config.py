@@ -6,7 +6,7 @@ import ipaddress
 import math
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal, cast
@@ -37,6 +37,41 @@ SiglentChannel = Literal["CH1"]
 
 class ConfigurationError(ValueError):
     """Report invalid operator startup configuration without secret contents."""
+
+
+@dataclass(frozen=True)
+class LearningModeConfiguration:
+    """Operator-owned passive acquisition and agent-authority policy."""
+
+    enabled: bool = False
+    sample_interval_s: float = 5.0
+    human_control_only: bool = True
+
+    @classmethod
+    def from_value(cls, raw_value: object) -> LearningModeConfiguration:
+        if raw_value is None:
+            return cls()
+        if not isinstance(raw_value, dict):
+            raise ConfigurationError("learning must be a TOML table.")
+        document = cast(dict[str, object], raw_value)
+        _closed_keys(
+            document,
+            {"enabled", "sample_interval_s", "human_control_only"},
+            "learning",
+        )
+        return cls(
+            enabled=_boolean(document.get("enabled", False), name="learning.enabled"),
+            sample_interval_s=_number(
+                document.get("sample_interval_s", 5.0),
+                name="learning.sample_interval_s",
+                minimum=0.1,
+                maximum=3600.0,
+            ),
+            human_control_only=_boolean(
+                document.get("human_control_only", True),
+                name="learning.human_control_only",
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -101,6 +136,9 @@ class McpStartupConfiguration:
     allow_remote_access: bool = False
     port: int = 8000
     max_load_current_A: float = 4.8
+    learning: LearningModeConfiguration = field(
+        default_factory=LearningModeConfiguration
+    )
 
     @classmethod
     def from_toml(cls, layout: SourceLayout) -> McpStartupConfiguration:
@@ -119,6 +157,7 @@ class McpStartupConfiguration:
                 "allow_remote_access",
                 "port",
                 "max_load_current_A",
+                "learning",
             },
             "MCP settings",
         )
@@ -167,6 +206,7 @@ class McpStartupConfiguration:
             allow_remote_access=allow_remote_access,
             port=port,
             max_load_current_A=parse_max_load_current(document),
+            learning=LearningModeConfiguration.from_value(document.get("learning")),
         )
 
 

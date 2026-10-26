@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from pathlib import Path
@@ -111,6 +112,7 @@ class RecordingService:
         self, recorder: SessionRecorder | None = None, *, directory: Path | None = None
     ) -> None:
         self.completion_recorded = False
+        self._append_lock = threading.RLock()
         self.directory = directory or new_run_directory("hardware")
         self.session_id = str(uuid4())
         self.recorder = recorder
@@ -134,15 +136,54 @@ class RecordingService:
     def _append(
         self, kind: str, payload: dict[str, Any], call_id: str, decision_id: str | None
     ) -> dict[str, Any]:
-        if self.recorder is None:
-            raise OSError("Session recorder unavailable")
-        return self.recorder.append_event(
-            kind,
-            payload,
-            call_id=call_id,
-            decision_id=decision_id,
-            virtual_time_s=payload.get("request_virtual_time_s"),
-        )
+        with self._append_lock:
+            if self.recorder is None:
+                raise OSError("Session recorder unavailable")
+            return self.recorder.append_event(
+                kind,
+                payload,
+                call_id=call_id,
+                decision_id=decision_id,
+                virtual_time_s=payload.get("request_virtual_time_s"),
+            )
+
+    def record_passive_observation(
+        self, name: str, result: CallToolResult
+    ) -> dict[str, Any]:
+        """Append one sampler-owned read through the ordinary observation projection."""
+
+        call_id, received_at = str(uuid4()), utc_now()
+        request: dict[str, Any] = {
+            "tool": name,
+            "arguments": {},
+            "received_at": received_at,
+            "actor": "learning_sampler",
+        }
+        with self._append_lock:
+            self._append("call_intent", request, call_id, None)
+            record = self._append(
+                "call_result",
+                {
+                    **request,
+                    "result": result.model_dump(mode="json", by_alias=True),
+                    "execution": "completed" if not result.is_error else "not_executed",
+                },
+                call_id,
+                None,
+            )
+            state = content_state(result.model_dump(mode="json", by_alias=True))
+            if not result.is_error and (
+                "pressure_mbar" in state or "native_current_setpoint_a" in state
+            ):
+                self.observation_ids.add(str(record["event_id"]))
+            return record
+
+    def record_learning_event(
+        self, kind: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Append one non-instrument learning event without selecting an action."""
+
+        return self._append(kind, payload, str(uuid4()), None)
 
     async def process_call(
         self,
@@ -152,6 +193,7 @@ class RecordingService:
         *,
         rejection: str | None = None,
         request_virtual_time_s: float | None = None,
+        actor: str = "agent",
     ) -> CallToolResult:
         """Validate context, record and dispatch once with action_context removed.
 
@@ -169,7 +211,14 @@ class RecordingService:
             False
         ]  # Shared across the SDK's sync-tool worker-thread context copy.
         token = _STARTED.set(started)
-        request = {"tool": name, "arguments": arguments, "received_at": received_at}
+        if actor not in {"agent", "human"}:
+            raise ValueError("actor must be agent or human")
+        request = {
+            "tool": name,
+            "arguments": arguments,
+            "received_at": received_at,
+            "actor": actor,
+        }
         try:
             if rejection is None and name in NORMAL_CONTROLS | {DECLARATION_TOOL}:
                 try:
@@ -223,6 +272,7 @@ class RecordingService:
                     decision = append(
                         "decision",
                         {
+                            "actor": actor,
                             "chosen_action": context.action,
                             "rationale_summary": context.rationale_summary,
                             "basis_event_ids": context.observation_ids,
