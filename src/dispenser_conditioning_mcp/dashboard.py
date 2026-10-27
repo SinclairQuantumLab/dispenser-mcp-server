@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
+import threading
 from html import escape
 from pathlib import Path
 from typing import Any, cast
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import (
     FileResponse,
@@ -28,6 +31,21 @@ from dispenser_conditioning_mcp.session_records import (
 from dispenser_conditioning_mcp.simulation_observer import SimulationObserverReader
 
 PAGE_SIZE = 200
+DASHBOARD_PAGE_SIZE = 1000
+MAX_DASHBOARD_PAGE_SIZE = 2000
+OVERVIEW_BUCKETS = 128
+MAX_OVERVIEW_MARKERS = 4096
+
+_OVERVIEW_NUMERIC_FIELDS = (
+    "pressure_mbar",
+    "commanded_load_current_limit_a",
+    "native_ch1_measured_current_a",
+    "measured_ch2_current_a",
+    "measured_parallel_load_current_a",
+    "native_ch1_voltage_setpoint_v",
+    "native_ch1_measured_voltage_v",
+    "measured_ch2_voltage_v",
+)
 
 
 def dashboard_routes(
@@ -50,10 +68,10 @@ def dashboard_routes(
     ) -> tuple[SessionTail, SimulationObserverReader, bool]:
         name = request.query_params.get("run", "")
         path = catalog.resolve(name)
-        reason = unavailable_reason(path) if name else None
-        if reason:
-            raise ValueError(reason)
         if path not in readers:
+            reason = unavailable_reason(path) if name else None
+            if reason:
+                raise ValueError(reason)
             readers[path] = (
                 SessionTail(path),
                 SimulationObserverReader(
@@ -65,7 +83,9 @@ def dashboard_routes(
 
     async def run_list(request: Request) -> Response:
         try:
-            items = catalog.list(request.query_params.get("archived") == "true")
+            items = await run_in_threadpool(
+                catalog.list, request.query_params.get("archived") == "true"
+            )
             return JSONResponse(
                 {"runs": items, "live_view_available": not replay},
                 headers={"Cache-Control": "no-store"},
@@ -124,10 +144,30 @@ def dashboard_routes(
         except ValueError as error:
             return JSONResponse({"error": str(error)}, status_code=400)
         return JSONResponse(
-            observer.snapshot(after, generation), headers={"Cache-Control": "no-store"}
+            await run_in_threadpool(observer.snapshot, after, generation),
+            headers={"Cache-Control": "no-store"},
         )
 
     assets = Path(__file__).with_name("dashboard_assets")
+
+    async def decorate(
+        request: Request,
+        tail: SessionTail,
+        saved: bool,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        management = await run_in_threadpool(catalog.management, tail.directory)
+        snapshot["metadata"]["label"] = management["display_name"]
+        snapshot["run_management"] = {
+            **management,
+            "name": tail.directory.name,
+            "current": not replay and tail.directory == directory,
+        }
+        snapshot["operator_authorized"] = access.authorized(request)
+        snapshot["recording_view"] = (
+            "saved_recording" if saved else "process_session"
+        )
+        return snapshot
 
     async def data(request: Request) -> Response:
         try:
@@ -139,17 +179,62 @@ def dashboard_routes(
             tail, _, saved = selected(request)
         except ValueError as error:
             return JSONResponse({"error": str(error)}, status_code=400)
-        snapshot = tail.snapshot(after, generation)
-        management = catalog.management(tail.directory)
-        snapshot["metadata"]["label"] = management["display_name"]
-        snapshot["run_management"] = {
-            **management,
-            "name": tail.directory.name,
-            "current": not replay and tail.directory == directory,
-        }
-        snapshot["operator_authorized"] = access.authorized(request)
-        snapshot["recording_view"] = "saved_recording" if saved else "process_session"
+        snapshot = await run_in_threadpool(tail.snapshot, after, generation)
+        snapshot = await decorate(request, tail, saved, snapshot)
         return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
+
+    async def overview(request: Request) -> Response:
+        try:
+            tail, _, saved = selected(request)
+        except ValueError as error:
+            return JSONResponse({"error": str(error)}, status_code=400)
+        snapshot = await run_in_threadpool(tail.overview)
+        snapshot = await decorate(request, tail, saved, snapshot)
+        return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
+
+    async def session_page(request: Request) -> Response:
+        try:
+            start = int(request.query_params.get("start", "0"))
+            limit = int(
+                request.query_params.get("limit", str(DASHBOARD_PAGE_SIZE))
+            )
+            generation = int(request.query_params["generation"])
+            if start < 0 or not 1 <= limit <= MAX_DASHBOARD_PAGE_SIZE:
+                raise ValueError
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "Invalid page request"}, status_code=400)
+        try:
+            tail, _, saved = selected(request)
+        except ValueError as error:
+            return JSONResponse({"error": str(error)}, status_code=400)
+        snapshot = await run_in_threadpool(
+            tail.page, start, generation, limit, True
+        )
+        snapshot = await decorate(request, tail, saved, snapshot)
+        return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
+
+    async def session_record(request: Request) -> Response:
+        event_id = request.query_params.get("event_id", "")
+        try:
+            generation = int(request.query_params["generation"])
+            if not event_id or len(event_id) > 256:
+                raise ValueError
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "Invalid record request"}, status_code=400)
+        try:
+            tail, _, saved = selected(request)
+        except ValueError as error:
+            return JSONResponse({"error": str(error)}, status_code=400)
+        snapshot = await run_in_threadpool(tail.record, event_id, generation)
+        snapshot = await decorate(request, tail, saved, snapshot)
+        status_code = 409 if snapshot["reset"] else 200
+        if snapshot["event"] is None and not snapshot["reset"]:
+            status_code = 404
+        return JSONResponse(
+            snapshot,
+            status_code=status_code,
+            headers={"Cache-Control": "no-store"},
+        )
 
     async def page(request: Request) -> Response:
         # Ordinary plots are public; only authorized viewers receive the phrase.
@@ -209,6 +294,9 @@ def dashboard_routes(
         Route("/vendor/plotly-basic-4.0.0.min.js", plotly),
         Route("/api/runs", run_list),
         Route("/api/runs/{operation}", manage_run, methods=["POST"]),
+        Route("/api/session/overview", overview),
+        Route("/api/session/page", session_page),
+        Route("/api/session/record", session_record),
         Route("/api/session", data),
         Route("/api/simulation-state", simulation_state),
     ]
@@ -312,67 +400,211 @@ class SessionTail:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
         self.offset = 0
-        self.identity = None
+        self.identity: tuple[int, int] | None = None
+        self.session_id: str | None = None
         self.generation = 0
         self.events: list[dict[str, Any]] = []
+        self.events_by_id: dict[str, dict[str, Any]] = {}
+        self.errors = 0
+        self.last_error: str | None = None
+        self.metadata: dict[str, Any] = {}
+        self.status = "waiting"
+        self.message: str | None = None
+        self._lock = threading.RLock()
+        self._overview_cache: dict[str, Any] | None = None
+
+    def _reset_locked(
+        self, identity: tuple[int, int], session_id: str
+    ) -> None:
+        self.offset = 0
+        self.events = []
+        self.events_by_id = {}
         self.errors = 0
         self.last_error = None
+        self.generation += 1
+        self.identity = identity
+        self.session_id = session_id
+        self._overview_cache = None
 
-    def snapshot(self, after: int = 0, generation: int = -1) -> dict[str, Any]:
-        metadata: dict[str, Any] = {}
-        status, message = "ready", None
-        pending = False
+    def _refresh_locked(self) -> None:
+        self.status, self.message = "ready", None
         try:
-            metadata = json.loads(
+            metadata: object = json.loads(
                 (self.directory / "metadata.json").read_text(encoding="utf-8")
             )
+            if not isinstance(metadata, dict):
+                raise ValueError("Unsupported session metadata")
+            self.metadata = cast(dict[str, Any], metadata)
+            session_id = self.metadata.get("session_id")
+            if not isinstance(session_id, str) or not session_id:
+                raise ValueError("Unsupported session metadata")
             path = self.directory / "events.jsonl"
             stat = path.stat()
             identity = (stat.st_dev, stat.st_ino)
-            if identity != self.identity or stat.st_size < self.offset:
-                self.offset, self.events = 0, []
-                self.errors, self.last_error = 0, None
-                self.generation += 1
-                self.identity = identity
+            if (
+                identity != self.identity
+                or stat.st_size < self.offset
+                or session_id != self.session_id
+            ):
+                self._reset_locked(identity, session_id)
+            changed = False
             with path.open("rb") as stream:
                 stream.seek(self.offset)
-                partial = False
-                for _ in range(PAGE_SIZE):
-                    line = stream.readline()
+                while stream.tell() < stat.st_size:
+                    line = stream.readline(stat.st_size - stream.tell())
                     if not line:
                         break
                     if not line.endswith(b"\n"):
-                        partial = True
-                        message = "Waiting for the current event line to finish"
+                        self.message = "Waiting for the current event line to finish"
                         break
                     self.offset = stream.tell()
                     try:
-                        event = json.loads(line)
-                        if event["session_id"] != metadata["session_id"]:
+                        event: object = json.loads(line)
+                        if not isinstance(event, dict):
+                            raise ValueError("Expected an event object")
+                        typed = cast(dict[str, Any], event)
+                        if typed["session_id"] != session_id:
                             raise ValueError("Wrong session ID")
-                        json.dumps(event, allow_nan=False)
-                        self.events.append(dashboard_record(event))
+                        json.dumps(typed, allow_nan=False)
+                        record = dashboard_record(typed)
+                        record["record_number"] = len(self.events) + 1
+                        self.events.append(record)
+                        event_id = record.get("event_id")
+                        if isinstance(event_id, str):
+                            self.events_by_id[event_id] = record
+                        changed = True
                     except (ValueError, TypeError, KeyError, AttributeError) as error:
                         self.errors += 1
                         self.last_error = str(error)
-                pending = self.offset < stat.st_size and not partial
+            if changed:
+                self._overview_cache = None
         except FileNotFoundError:
-            status, message = "waiting", "Waiting for session metadata and events.jsonl"
+            self.status = "waiting"
+            self.message = "Waiting for session metadata and events.jsonl"
         except (OSError, ValueError) as error:
-            status, message = "error", str(error)
-        reset = generation != self.generation or after > len(self.events)
-        start = 0 if reset else max(0, after)
-        end = min(start + PAGE_SIZE, len(self.events))
+            self.status = "error"
+            self.message = str(error)
+
+    def _base_locked(self) -> dict[str, Any]:
         return {
-            "metadata": metadata,
-            "status": status,
-            "message": message,
+            "metadata": dict(self.metadata),
+            "status": self.status,
+            "message": self.message,
             "source": str(self.directory),
             "generation": self.generation,
-            "cursor": end,
-            "has_more": end < len(self.events) or pending,
-            "reset": reset,
+            "total_records": len(self.events),
             "errors": self.errors,
             "last_error": self.last_error,
-            "events": self.events[start:end],
         }
+
+    def _overview_locked(self) -> dict[str, Any]:
+        if self._overview_cache is not None:
+            return {
+                **self._overview_cache,
+                "events": [dict(event) for event in self._overview_cache["events"]],
+            }
+        observations = [
+            (index, event)
+            for index, event in enumerate(self.events)
+            if event.get("observation_kind") is not None
+        ]
+        selected: set[int] = set()
+        bucket_count = min(OVERVIEW_BUCKETS, len(observations))
+        if bucket_count:
+            for bucket in range(bucket_count):
+                start = bucket * len(observations) // bucket_count
+                end = (bucket + 1) * len(observations) // bucket_count
+                rows = observations[start:end]
+                if not rows:
+                    continue
+                selected.update((rows[0][0], rows[-1][0]))
+                for field in _OVERVIEW_NUMERIC_FIELDS:
+                    numeric = [
+                        (index, float(value))
+                        for index, event in rows
+                        if not isinstance((value := event.get(field)), bool)
+                        and isinstance(value, (int, float))
+                        and math.isfinite(value)
+                    ]
+                    if numeric:
+                        selected.add(min(numeric, key=lambda row: row[1])[0])
+                        selected.add(max(numeric, key=lambda row: row[1])[0])
+        sample_indexes = set(selected)
+        marker_indexes = [
+            index
+            for index, event in enumerate(self.events)
+            if event.get("phase") is not None
+            or event.get("kind")
+            in {
+                "decision",
+                "call_error",
+                "external_change_detected",
+                "human_action_context",
+            }
+            or event.get("is_error") is True
+        ]
+        marker_half = MAX_OVERVIEW_MARKERS // 2
+        returned_markers = (
+            marker_indexes
+            if len(marker_indexes) <= MAX_OVERVIEW_MARKERS
+            else marker_indexes[:marker_half] + marker_indexes[-marker_half:]
+        )
+        selected.update(returned_markers)
+        overview: dict[str, Any] = {
+            "events": [dict(self.events[index]) for index in sorted(selected)],
+            "total_observations": len(observations),
+            "sample_count": len(sample_indexes),
+            "marker_count": len(marker_indexes),
+            "marker_count_returned": len(returned_markers),
+            "markers_complete": len(returned_markers) == len(marker_indexes),
+            "bucket_count": bucket_count,
+            "bucket_basis": "observation_record_order",
+        }
+        self._overview_cache = overview
+        return {**overview, "events": [dict(event) for event in overview["events"]]}
+
+    def overview(self) -> dict[str, Any]:
+        with self._lock:
+            self._refresh_locked()
+            return {**self._base_locked(), "overview": self._overview_locked()}
+
+    def page(
+        self,
+        start: int,
+        generation: int,
+        limit: int = PAGE_SIZE,
+        empty_on_reset: bool = False,
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._refresh_locked()
+            reset = generation != self.generation or start > len(self.events)
+            page_start = 0 if reset else max(0, start)
+            if reset and empty_on_reset:
+                page_end = page_start
+            else:
+                page_end = min(page_start + limit, len(self.events))
+            return {
+                **self._base_locked(),
+                "start": page_start,
+                "end": page_end,
+                "cursor": page_end,
+                "has_more": page_end < len(self.events),
+                "reset": reset,
+                "events": [
+                    dict(event) for event in self.events[page_start:page_end]
+                ],
+            }
+
+    def record(self, event_id: str, generation: int) -> dict[str, Any]:
+        with self._lock:
+            self._refresh_locked()
+            reset = generation != self.generation
+            record = None if reset else self.events_by_id.get(event_id)
+            return {
+                **self._base_locked(),
+                "reset": reset,
+                "event": dict(record) if record is not None else None,
+            }
+
+    def snapshot(self, after: int = 0, generation: int = -1) -> dict[str, Any]:
+        return self.page(after, generation, PAGE_SIZE)

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -113,6 +114,7 @@ class SimulationObserverReader:
         self.parameters: dict[str, Any] = {}
         self._conflict: str | None = None
         self._total_rows = 0
+        self._lock = threading.RLock()
 
     def _association(self, metadata: dict[str, Any]) -> tuple[str | None, str]:
         expected = self.expected_run_id
@@ -144,6 +146,12 @@ class SimulationObserverReader:
         )
 
     def snapshot(self, after: int = 0, generation: int = -1) -> dict[str, Any]:
+        with self._lock:
+            return self._snapshot_locked(after, generation)
+
+    def _snapshot_locked(
+        self, after: int = 0, generation: int = -1
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "status": "waiting",
             "message": None,

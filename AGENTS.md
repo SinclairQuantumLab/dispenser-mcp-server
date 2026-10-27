@@ -211,6 +211,12 @@
 - Ordinary dashboard HTML/assets, run lists and recorded observations/actions/
   decisions are public. Guard internal simulation data and management POSTs with
   the existing operator boundary. Locked truth must not block ordinary polling.
+  Build the public whole-run overview from exact projected samples and sparse
+  action/error markers, then load independent bounded exact pages concurrently.
+  Cache one serialized append-aware index per run, parse files off the app event
+  loop, merge by stable file-order record number, retry failed ranges, and keep
+  protected simulator-truth fetching independent from public history. Bound and
+  page the visible history cards without dropping the in-memory exact lookup.
   Preserve selected runs across login. Leave /mcp independent. Show access phrases in the HTTP startup terminal and dashboard/operator pages for
   passphrase-authenticated viewers; never anonymous
   remote/login pages, static assets, MCP results, records or URLs. In addition,

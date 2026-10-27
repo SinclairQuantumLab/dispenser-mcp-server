@@ -115,9 +115,12 @@ function applyY(id,layout,traces) {
     axis.autorange=false;
   }
 }
-function redrawAll() {
-  const next=redrawQueue.then(async()=>{sharedView.wall=el("clock").value==="wall";await draw();await drawVoltage();await drawTokens();if(truthData) await drawTruth(truthData,true);});
+function redrawPublic() {
+  const next=redrawQueue.then(async()=>{sharedView.wall=el("clock").value==="wall";await draw();await drawVoltage();await drawTokens();});
   redrawQueue=next.catch(()=>{});return next;
+}
+function redrawAll() {
+  return redrawPublic().then(async()=>{if(truthData) await drawTruth(truthData,true);});
 }
 function watchTimeView(id) {
   const graph=el(id),state=chartStates[id];
@@ -138,7 +141,7 @@ let operatorAuthorized = document.body.dataset.operatorAuthorized === "true";
 let loginRevision=0;
 document.addEventListener("dashboard-login-success",()=>{
   loginRevision++;operatorAuthorized=true;updateManagement();
-  poll();
+  requestOverviewSoon();requestTruthSoon();
 });
 for(const link of document.querySelectorAll(".operator-unlock")) {
   const target=new URL("/dashboard/login",location.origin);
@@ -147,14 +150,21 @@ for(const link of document.querySelectorAll(".operator-unlock")) {
 }
 const selectedRun = new URLSearchParams(window.location.search).get("run") || "";
 const runQuery = "run=" + encodeURIComponent(selectedRun);
-let cursor = 0, generation = -1, metadata = {};
+const PUBLIC_PAGE_SIZE=1000,PUBLIC_PAGE_WORKERS=4,HISTORY_WINDOW_SIZE=200;
+let generation = -1, metadata = {};
 let events = [], observations = [], controls = [], decisions = [];
 let chartReady = false, clockInitializedFor = null;
 const byId = new Map();
 const recordNumbers = new Map();
+const exactByNumber=new Map(),overviewByNumber=new Map(),pageCoverage=new Map(),failedPages=new Map();
+const pageQueue=[],queuedPages=new Set(),inFlightPages=new Set();
+let totalRecords=0,overviewReady=false,historyComplete=false,activePageRequests=0;
+let pageWorkerCount=0;
+let overviewRunning=false,overviewTimer=null,overviewRevision=0;
+let historyWindowEnd=0,historyPinnedNewest=true;
+let renderDirty=false,renderRunning=false;
 let selectedId = null, truthRevision = null, truthRows = [];
 let truthCursor=0, truthGeneration=-1, truthMore=false, truthData=null;
-let pollRunning=false, pollTimer=null;
 const shortId = id => recordNumbers.has(id) ? "#" + String(recordNumbers.get(id)).padStart(3, "0") : "Unloaded record";
 const actor = (event = {}) => ({agent:"Agent",scripted:"Script",human:"Human",learning_sampler:"MCP sampler"})[event.actor || metadata.source] || "Caller";
 const toolLabel = name => ({
@@ -202,9 +212,23 @@ function placementLabel(row) {
 }
 const xFor = row => el("clock").value === "virtual" ? virtualMinutes(row) : row.recorded_at;
 
-function selectEvent(id, jump = false) {
-  const event = byId.get(id);
-  if (!event) { el("raw").textContent = `Referenced event ${id} is not in this session file.`; return; }
+async function loadExactEvent(id) {
+  try {
+    const response=await fetch(`/api/session/record?event_id=${encodeURIComponent(id)}&generation=${generation}&${runQuery}`,{cache:"no-store",signal:AbortSignal.timeout(5000)});
+    const data=await response.json();
+    if(response.status===409||data.reset) {resetPublicState(data.generation);requestOverviewSoon();return null;}
+    if(!response.ok||!data.event) return null;
+    exactByNumber.set(data.event.record_number,data.event);schedulePublicRender();
+    return data.event;
+  } catch {return null;}
+}
+async function selectEvent(id, jump = false) {
+  let event = byId.get(id);
+  if (!event) {
+    el("raw").textContent = `Loading referenced event ${id}…`;
+    event=await loadExactEvent(id);
+  }
+  if (!event) { el("raw").textContent = `Referenced event ${id} is unavailable in this session file.`; return; }
   selectedId = id;
   highlightSelection();
   const linkedItem = [...document.querySelectorAll("[data-record]")].find(node => node.dataset.record === id);
@@ -265,7 +289,7 @@ output_enabled: "Output: " + (value ? "ON" : "OFF")
 }
 
 function eventButton(id, label, jump = true) {
-  const button = text("button", label); button.addEventListener("click", () => selectEvent(id, jump)); return button;
+  const button = text("button", label); button.addEventListener("click", () => {selectEvent(id, jump).catch(showViewError);}); return button;
 }
 
 function reportedUsage(rows) {
@@ -319,6 +343,31 @@ async function drawTokens() {
   el("token-chart").on("plotly_click",event=>{const id=event.points[0]?.customdata;if(id)selectEvent(id);});
 }
 
+function rebuildDerived() {
+  const merged=new Map(overviewByNumber);
+  for(const [number,event] of exactByNumber) merged.set(number,event);
+  events=[...merged.values()].sort((a,b)=>a.record_number-b.record_number);
+  observations=events.filter(row=>row.observation_kind);
+  controls=events.filter(row=>row.phase);
+  decisions=events.filter(row=>row.kind==="decision");
+  byId.clear();recordNumbers.clear();intentsByCall.clear();resultsByCall.clear();
+  for(const event of events) {
+    byId.set(event.event_id,event);recordNumbers.set(event.event_id,event.record_number);
+    if(event.kind==="call_intent") intentsByCall.set(event.call_id,event);
+    if(event.kind==="call_result"||event.kind==="call_error") resultsByCall.set(event.call_id,event);
+  }
+  historyComplete=overviewReady&&exactByNumber.size===totalRecords&&failedPages.size===0&&inFlightPages.size===0&&pageQueue.length===0;
+  if(historyPinnedNewest) historyWindowEnd=totalRecords;
+}
+function displayedHistory() {
+  const end=Math.min(totalRecords,Math.max(HISTORY_WINDOW_SIZE,historyWindowEnd||totalRecords));
+  const start=Math.max(1,end-HISTORY_WINDOW_SIZE+1);
+  const rows=events.filter(event=>event.record_number>=start&&event.record_number<=end);
+  el("history-window").textContent=totalRecords ? `Showing records ${start}–${end} of ${totalRecords}${historyComplete?"":" · exact history still loading"}` : "No records";
+  el("history-older").disabled=start<=1;
+  el("history-newer").disabled=end>=totalRecords;
+  return rows;
+}
 function updatePanels() {
   const p = observations.filter(r => num(r.pressure_mbar) !== null).at(-1);
   const power = observations.filter(r => r.observation_kind === "power").at(-1);
@@ -326,8 +375,12 @@ function updatePanels() {
   el("set").textContent = power ? `${fmt(power.commanded_load_current_limit_a)} A` : "—";
   el("actual").textContent = power ? `${fmt(power.measured_parallel_load_current_a)} A` : "—";
   el("output").textContent = power?.output_enabled === true ? "ON" : power?.output_enabled === false ? "OFF" : "—";
+  const lastObservation=observations.at(-1),observedAgo=lastObservation?Math.max(0,(Date.now()-Date.parse(lastObservation.recorded_at))/1000):null;
+  el("observation-age").textContent=lastObservation?`Last source observation: ${lastObservation.observed_at||"unavailable"} · Received/recorded ${Number.isFinite(observedAgo)?Math.floor(observedAgo)+" s ago":"at an unavailable time"}. This page reads MCP records; it does not trigger measurements.`:"No observation yet. This dashboard does not sample instruments.";
+  const history=displayedHistory();
+  const displayedDecisions=history.filter(row=>row.kind==="decision");
   el("decisions").replaceChildren();
-  for (const row of [...decisions].reverse()) {
+  for (const row of [...displayedDecisions].reverse()) {
     const card = text("article", "", "card"); card.dataset.record = row.event_id;
     card.append(text("small", `${shortId(row.event_id)} · ${actor(row)} decision: ${row.decision_at || "not supplied"} · MCP receipt: ${row.received_at || row.recorded_at}`), text("h3", row.chosen_action), text("p", row.rationale_summary));
     card.append(text("p", usageText(row.token_usage_id ? {usage_id:row.token_usage_id,total_tokens:row.total_tokens,input_tokens:row.input_tokens,output_tokens:row.output_tokens,cached_input_tokens:row.cached_input_tokens,model:row.token_model}:null), "muted"));
@@ -338,9 +391,9 @@ function updatePanels() {
     for (const id of (row.basis_event_ids || [])) links.append(eventButton(id, `Supporting observation ${shortId(id)} ↗`));
     card.append(links); el("decisions").append(card);
   }
-  if (!decisions.length) el("decisions").append(text("div", "No decisions recorded. No rationale is inferred from calls.", "empty"));
+  if (!displayedDecisions.length) el("decisions").append(text("div", "No decisions in this 200-record window. No rationale is inferred from calls.", "empty"));
   el("events").replaceChildren();
-  for (const event of events.filter(e => e.kind !== "decision").reverse()) {
+  for (const event of history.filter(e => e.kind !== "decision").reverse()) {
     const failed = event.kind === "call_error" || event.is_error === true;
     const line = text("div", "", "event"); line.dataset.record = event.event_id;
     line.append(eventButton(event.event_id, `${shortId(event.event_id)} · ${event.kind === "call_intent" ? actor(event) + " → MCP" : "MCP → " + actor(event)} · ${toolLabel(event.tool)} · ${outcome(event)} · ${event.recorded_at}`));
@@ -349,6 +402,24 @@ function updatePanels() {
   }
   highlightSelection();
 }
+function schedulePublicRender() {
+  renderDirty=true;
+  if(renderRunning) return;
+  requestAnimationFrame(()=>{flushPublicRender().catch(showViewError);});
+}
+async function flushPublicRender() {
+  if(renderRunning) return;
+  renderRunning=true;
+  try {
+    while(renderDirty) {
+      renderDirty=false;
+      rebuildDerived();updatePanels();
+      await redrawPublic();
+    }
+  } finally {renderRunning=false;}
+}
+el("history-older").addEventListener("click",()=>{historyPinnedNewest=false;historyWindowEnd=Math.max(HISTORY_WINDOW_SIZE,historyWindowEnd-HISTORY_WINDOW_SIZE);updatePanels();});
+el("history-newer").addEventListener("click",()=>{historyWindowEnd=Math.min(totalRecords,historyWindowEnd+HISTORY_WINDOW_SIZE);historyPinnedNewest=historyWindowEnd>=totalRecords;updatePanels();});
 
 async function draw() {
   if (!window.Plotly) { el("status").textContent = "Local Plotly bundle could not load."; return; }
@@ -442,53 +513,104 @@ function readFailure(error) {
   if (error instanceof TypeError) return "Dashboard network read failed; retained data may be stale. Retrying";
   return "Dashboard read failed: "+String(error.message||error).replace(/[.]+$/,"")+". Retained data may be stale; retrying";
 }
-async function poll() {
-  if (pollRunning) return;
-  clearTimeout(pollTimer);pollRunning=true;
-  const startedLoginRevision=loginRevision;
-  let catchUp=false;
+function resetPublicState(nextGeneration=-1) {
+  generation=nextGeneration;totalRecords=0;overviewReady=false;historyComplete=false;
+  exactByNumber.clear();overviewByNumber.clear();pageCoverage.clear();failedPages.clear();
+  pageQueue.length=0;queuedPages.clear();inFlightPages.clear();activePageRequests=0;
+  events=[];observations=[];controls=[];decisions=[];byId.clear();recordNumbers.clear();intentsByCall.clear();resultsByCall.clear();
+  selectedId=null;historyWindowEnd=0;historyPinnedNewest=true;
+  resetTimeView("chart");resetTimeView("truth-chart");clearTruth();
+}
+function applyPublicContext(data,changed) {
+  el("view-mode").textContent=data.recording_view==="saved_recording"?"SAVED RUN":"LIVE VIEW · current process";
+  metadata=data.metadata||metadata;
+  runManagement=data.run_management||{};updateManagement();
+  if(metadata.session_id&&clockInitializedFor!==metadata.session_id) {
+    el("clock").value=metadata.session_kind==="simulated"&&metadata.observed_time_origin?"virtual":"wall";
+    resetTimeView("chart");resetTimeView("truth-chart");clockInitializedFor=metadata.session_id;
+  }
+  const simulated=metadata.session_kind==="simulated",live=metadata.session_kind==="live";
+  el("mode").className="mode-strip"+(live?" live":"");
+  el("mode").replaceChildren(text("div",simulated?"◈ SIMULATION":live?"◆ LIVE HARDWARE":"? FIXTURE / SOURCE UNKNOWN"),text("small",live?"Hardware-source recording. This banner does NOT mean output is energized or measurements are current.":"Simulated equipment only — no real equipment is connected to this recording."));
+  el("decision-heading").textContent="Decisions and reasons · attributed per record";
+  el("title").textContent=metadata.label||"Observations, actions, decisions";
+  el("provenance").textContent=metadata.session_kind?`Initial caller: ${actor()} · Individual records identify agent, human or independent MCP sampling.`:"Waiting to learn who made the requests.";
+  el("session-details").textContent=`Session ${metadata.session_id||"not available"} · ${metadata.session_kind||"unknown source"}. ${live?"Hardware-source records do not establish current output state.":"Synthetic, uncalibrated data; not hardware evidence. Scripted demonstrations are not AI blind runs."}`;
+  el("decision-caption").textContent="Submitted reasons in the displayed 200-record window, with links to the readings used.";
+  el("provenance").className=metadata.session_kind&&!live?"banner synthetic":"banner";
+  el("source").textContent=`${data.recording_view==="saved_recording"?"SAVED RECORDING / REPLAY VIEW":"PROCESS SESSION RECORDS"} · File checked ${new Date().toISOString()} · ${changed?"Records updated":"No new records this check"} · Read-only source: ${data.source||"not configured"}`;
+  document.dispatchEvent(new CustomEvent("dashboard-session-update",{detail:{operatorAuthorized,metadata}}));
+}
+function updateLoadingStatus(data={}) {
+  const retry=failedPages.size?` · ${failedPages.size} range(s) retrying`:"";
+  const state=historyComplete?"Exact history caught up":overviewReady?"Overview ready · loading exact history":"Loading whole-run overview";
+  el("status").textContent=`${state} · exact ${exactByNumber.size}/${totalRecords} · ${activePageRequests} page request(s) active${retry}${data.message?"\n"+data.message:""}${data.errors?`\n${data.errors} unreadable record(s): ${data.last_error}`:""}`;
+  el("status").className=data.status==="error"||data.errors?"error":"";
+}
+function mergeRecords(records,target) {
+  for(const event of records||[]) if(Number.isInteger(event.record_number)&&event.record_number>0) target.set(event.record_number,event);
+}
+function requestOverviewSoon() {
+  clearTimeout(overviewTimer);overviewTimer=setTimeout(()=>{pollOverview().catch(showViewError);},0);
+}
+function queueMissingPages() {
+  for(let start=0;start<totalRecords;start+=PUBLIC_PAGE_SIZE) {
+    const requiredEnd=Math.min(start+PUBLIC_PAGE_SIZE,totalRecords),key=`${generation}:${start}`;
+    if((pageCoverage.get(start)||0)>=requiredEnd||queuedPages.has(key)||inFlightPages.has(key)) continue;
+    pageQueue.push({start,generation});queuedPages.add(key);
+  }
+  pumpPageWorkers();
+}
+function pumpPageWorkers() {
+  while(pageWorkerCount<PUBLIC_PAGE_WORKERS&&pageQueue.length) {pageWorkerCount++;runPageWorker().catch(showViewError);}
+}
+async function runPageWorker() {
   try {
-    const response = await fetch(`/api/session?after=${cursor}&generation=${generation}&${runQuery}`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
-    if (!response.ok) { const problem = await response.json(); throw new Error(`HTTP ${response.status}: ${problem.error || "Dashboard request failed"}`); }
-    const data = await response.json();
-    el("view-mode").textContent = data.recording_view === "saved_recording" ? "SAVED RUN" : "LIVE VIEW · current process";
-    const changed = data.reset || (data.events?.length || 0) > 0 || operatorAuthorized !== (data.operator_authorized === true);
-    if (data.reset) { events = []; observations = []; controls = []; decisions = []; byId.clear(); intentsByCall.clear(); resultsByCall.clear(); recordNumbers.clear(); selectedId = null; resetTimeView("chart");resetTimeView("truth-chart");clearTruth(); }
-    metadata = data.metadata || metadata;
-    if(startedLoginRevision===loginRevision) operatorAuthorized = data.operator_authorized === true;
-    runManagement = data.run_management || {};
-    updateManagement();
-    if (metadata.session_id && clockInitializedFor !== metadata.session_id) {
-      el("clock").value = metadata.session_kind === "simulated" && metadata.observed_time_origin ? "virtual" : "wall";
-      resetTimeView("chart");resetTimeView("truth-chart");
-      clockInitializedFor = metadata.session_id;
+    while(pageQueue.length) {
+      const job=pageQueue.shift(),key=`${job.generation}:${job.start}`;queuedPages.delete(key);inFlightPages.add(key);activePageRequests=inFlightPages.size;updateLoadingStatus();
+      try {
+        const response=await fetch(`/api/session/page?start=${job.start}&limit=${PUBLIC_PAGE_SIZE}&generation=${job.generation}&${runQuery}`,{cache:"no-store",signal:AbortSignal.timeout(10000)});
+        const data=await response.json();
+        if(!response.ok) throw new Error(`HTTP ${response.status}`);
+        if(job.generation!==generation) continue;
+        if(data.reset||data.generation!==generation) {resetPublicState(data.generation);requestOverviewSoon();continue;}
+        mergeRecords(data.events,exactByNumber);pageCoverage.set(job.start,data.end);failedPages.delete(job.start);
+      } catch(error) {
+        if(job.generation===generation) failedPages.set(job.start,readFailure(error));
+      } finally {
+        inFlightPages.delete(key);activePageRequests=inFlightPages.size;schedulePublicRender();updateLoadingStatus();
+      }
     }
-    generation = data.generation ?? generation; cursor = data.cursor ?? cursor;
-    const pageRecords=data.events||[];
-    events.push(...pageRecords);observations.push(...pageRecords.filter(r=>r.observation_kind));controls.push(...pageRecords.filter(r=>r.phase));decisions.push(...pageRecords.filter(r=>r.kind==="decision"));
-    for (const event of data.events || []) { byId.set(event.event_id, event); recordNumbers.set(event.event_id, recordNumbers.size + 1); if (event.kind === "call_intent") intentsByCall.set(event.call_id, event); if (event.kind === "call_result" || event.kind === "call_error") resultsByCall.set(event.call_id,event); }
-    const simulated = metadata.session_kind === "simulated", live = metadata.session_kind === "live";
-    el("mode").className = "mode-strip" + (live ? " live" : "");
-    el("mode").replaceChildren(text("div", simulated ? "◈ SIMULATION" : live ? "◆ LIVE HARDWARE" : "? FIXTURE / SOURCE UNKNOWN"), text("small", live ? "Hardware-source recording. This banner does NOT mean output is energized or measurements are current." : "Simulated equipment only — no real equipment is connected to this recording."));
-    el("decision-heading").textContent = "Decisions and reasons · attributed per record";
-    el("title").textContent = metadata.label || "Observations, actions, decisions";
-    el("provenance").textContent = metadata.session_kind ? `Initial caller: ${actor()} · Individual records identify agent, human or independent MCP sampling.` : "Waiting to learn who made the requests.";
-    el("session-details").textContent = `Session ${metadata.session_id || "not available"} · ${metadata.session_kind || "unknown source"}. ${metadata.session_kind === "live" ? "Hardware-source records do not establish current output state." : "Synthetic, uncalibrated data; not hardware evidence. Scripted demonstrations are not AI blind runs."}`;
-    el("decision-caption").textContent = "Submitted reasons with their recorded actor and links to the readings used.";
-    el("provenance").className = metadata.session_kind && metadata.session_kind !== "live" ? "banner synthetic" : "banner";
-    el("source").textContent = `${data.recording_view === "saved_recording" ? "SAVED RECORDING / REPLAY VIEW" : "PROCESS SESSION RECORDS"} · File checked ${new Date().toISOString()} · ${changed ? "Records updated" : "No new records this check"} · Read-only source: ${data.source || "not configured"}`;
-    const lastObservation = observations.at(-1);
-    const observedAgo = lastObservation ? Math.max(0, (Date.now() - Date.parse(lastObservation.recorded_at)) / 1000) : null;
-    el("observation-age").textContent = lastObservation ? `Last source observation: ${lastObservation.observed_at || "unavailable"} · Received/recorded ${Math.floor(observedAgo)} s ago. This page reads MCP records; it does not trigger measurements.` : "No observation yet. This dashboard does not sample instruments.";
-    document.dispatchEvent(new CustomEvent("dashboard-session-update", {detail:{operatorAuthorized,metadata}}));
-    el("status").textContent = `${data.has_more ? "Loading history" : "Caught up · waiting for new records"} · ${events.length} records · ${observations.length} readings · ${controls.filter(c => c.phase === "call_intent").length} power requests · ${decisions.length} decisions${data.message ? "\n" + data.message : ""}${data.errors ? `\n${data.errors} unreadable record(s): ${data.last_error}` : ""}`;
-    el("status").className = data.status === "error" || data.errors ? "error" : "";
-    if (changed) updatePanels();
-    const truthChanged=await pollTruth();
-    if(changed||truthChanged) await redrawAll();
-    catchUp=Boolean(data.has_more || truthMore);
-  } catch (error) { el("status").textContent = readFailure(error); el("status").className = "error"; }
-  finally {pollRunning=false;pollTimer=setTimeout(poll,catchUp ? 0 : 1000);}
+  } finally {pageWorkerCount--;if(pageQueue.length)pumpPageWorkers();}
+}
+async function pollOverview() {
+  if(overviewRunning) return;
+  clearTimeout(overviewTimer);overviewRunning=true;
+  const revision=++overviewRevision,startedLoginRevision=loginRevision;
+  try {
+    const response=await fetch(`/api/session/overview?${runQuery}`,{cache:"no-store",signal:AbortSignal.timeout(10000)});
+    if(!response.ok) {const problem=await response.json();throw new Error(`HTTP ${response.status}: ${problem.error||"Dashboard request failed"}`);}
+    const data=await response.json();
+    if(revision!==overviewRevision) return;
+    const changed=generation!==data.generation||totalRecords!==data.total_records||!overviewReady;
+    const wasAuthorized=operatorAuthorized;
+    if(generation!==data.generation) resetPublicState(data.generation);
+    if(startedLoginRevision===loginRevision) operatorAuthorized=data.operator_authorized===true;
+    if(wasAuthorized&&!operatorAuthorized) clearTruth();
+    totalRecords=data.total_records||0;overviewReady=true;
+    overviewByNumber.clear();mergeRecords(data.overview?.events,overviewByNumber);
+    if(historyPinnedNewest) historyWindowEnd=totalRecords;
+    applyPublicContext(data,changed);queueMissingPages();
+    if(changed||wasAuthorized!==operatorAuthorized) schedulePublicRender();
+    updateLoadingStatus(data);
+  } catch(error) {el("status").textContent=readFailure(error);el("status").className="error";}
+  finally {overviewRunning=false;overviewTimer=setTimeout(()=>{pollOverview().catch(showViewError);},1000);}
+}
+let truthPollRunning=false,truthPollTimer=null,truthRenderPending=false;
+function requestTruthSoon(){clearTimeout(truthPollTimer);truthPollTimer=setTimeout(()=>{pollTruthLoop().catch(showViewError);},0);}
+function scheduleTruthRender() {
+  if(truthRenderPending)return;truthRenderPending=true;
+  requestAnimationFrame(async()=>{truthRenderPending=false;if(truthData)await drawTruth(truthData);});
 }
 async function pollTruth(force=false) {
   const section=el("inside");section.hidden=metadata.session_kind!=="simulated";
@@ -496,11 +618,14 @@ async function pollTruth(force=false) {
   el("truth-content").hidden=!operatorAuthorized;el("truth-locked").hidden=operatorAuthorized;
   if(!operatorAuthorized) return clearTruth();
   if (force) {if(truthData) await drawTruth(truthData,true);return;}
+  const requestedLoginRevision=loginRevision,requestedGeneration=generation,requestedSession=metadata.session_id;
   try {
     const response=await fetch(`/api/simulation-state?after=${truthCursor}&generation=${truthGeneration}&${runQuery}`,{cache:"no-store",signal:AbortSignal.timeout(5000)});
+    if(requestedLoginRevision!==loginRevision||requestedGeneration!==generation||requestedSession!==metadata.session_id) return false;
     if(response.status===401||response.status===403) {operatorAuthorized=false;el("truth-content").hidden=true;el("truth-locked").hidden=false;clearTruth();return true;}
     if(!response.ok) throw new Error("HTTP "+response.status);
     const data=await response.json();
+    if(!operatorAuthorized||requestedLoginRevision!==loginRevision||requestedGeneration!==generation||requestedSession!==metadata.session_id) return false;
     if(data.reset) {truthRows=[];truthRevision=null;}
     truthCursor=data.cursor??truthCursor;truthGeneration=data.generation??truthGeneration;
     truthMore=Boolean(data.has_more);
@@ -509,8 +634,14 @@ async function pollTruth(force=false) {
     truthRows.push(...(data.rows||[]));
     truthData={...data,rows:truthRows};
     el("truth-status").textContent=(truthMore?"Loading model history":"Caught up")+ " · "+truthRows.length+" model snapshots · "+data.status+" · "+(data.message||"Model snapshots available")+(data.errors?" · Invalid rows: "+data.errors:"");
+    if(changed){scheduleTruthRender();schedulePublicRender();}
     return changed;
   } catch(error) {truthMore=false;el("truth-status").textContent=readFailure(error);}
+}
+async function pollTruthLoop() {
+  if(truthPollRunning)return;truthPollRunning=true;
+  try {await pollTruth();}
+  finally {truthPollRunning=false;truthPollTimer=setTimeout(()=>{pollTruthLoop().catch(showViewError);},truthMore?0:1000);}
 }
 async function drawTruth(data,force=false) {
     const allRows=data.rows||[];
@@ -679,4 +810,5 @@ el("run-picker").addEventListener("change", event => {
 });
 el("refresh-runs").addEventListener("click", refreshRuns);
 refreshRuns();
-poll();
+pollOverview().catch(showViewError);
+pollTruthLoop().catch(showViewError);
