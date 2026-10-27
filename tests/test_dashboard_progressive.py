@@ -169,10 +169,30 @@ def test_one_locked_scan_builds_extrema_overview_and_independent_pages(
     assert reset["generation"] != generation and reset["total_records"] == 1
 
 
+def test_server_time_display_fails_honestly_without_iana_zone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable() -> str:
+        raise OSError("synthetic local-zone failure")
+
+    monkeypatch.setattr(dashboard, "get_localzone_name", unavailable)
+    assert dashboard.server_time_display() == {
+        "scope": "current_dashboard_host",
+        "available": False,
+        "iana_time_zone": None,
+        "message": (
+            "Server local time is unavailable because this host has no usable "
+            "IANA time-zone configuration."
+        ),
+    }
+
+
 @pytest.mark.anyio
 async def test_public_progressive_routes_are_projected_bounded_and_random_access(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(dashboard, "get_localzone_name", lambda: "America/Chicago")
     directory = tmp_path / "run"
     _write_run(directory, 2201)
     app = Starlette(routes=dashboard_routes(directory, replay=True))
@@ -182,6 +202,15 @@ async def test_public_progressive_routes_are_projected_bounded_and_random_access
         overview_response = await client.get("/api/session/overview")
         assert overview_response.status_code == 200
         overview = overview_response.json()
+        assert overview["server_time"] == {
+            "scope": "current_dashboard_host",
+            "available": True,
+            "iana_time_zone": "America/Chicago",
+            "message": (
+                "Server local time uses the current dashboard host, not an "
+                "inferred historical acquisition location."
+            ),
+        }
         assert overview["total_records"] == 2205
         assert len(overview["overview"]["events"]) < 2205
         assert all("payload" not in event for event in overview["overview"]["events"])

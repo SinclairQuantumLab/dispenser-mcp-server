@@ -253,7 +253,12 @@
 - Remote update workflow: modify locally, push, then root asks the operator to
   pull and restart. Do not add compatibility layers for stale remote code or
   administer the remote host as a substitute for the operator's deployment.
-- All dashboard charts share one wall/virtual clock and Fixed/Rolling/Full X range.
+- All dashboard charts share UTC, current-server-local, browser-local, real
+  elapsed and (for simulations only) model elapsed clocks plus one
+  Fixed/Rolling/Full X range. Real elapsed starts at metadata.created_at, never
+  the first page or sample. Use the current host's explicit IANA zone for server
+  display and disable that choice when unavailable; never substitute the browser
+  zone or claim an original historical acquisition locale. Preserve UTC records.
   Auto-Y is per numerical panel and uses finite visible-time data (positive for log).
   Manual Y ranges survive refresh when Auto-Y is off. Never reconstruct actual
   wall timestamps from synthetic observed_at; omit unavailable wall coordinates.

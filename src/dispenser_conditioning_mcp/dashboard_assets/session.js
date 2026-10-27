@@ -1,15 +1,22 @@
 "use strict";
-// Numeric coordinates remain minutes; only displayed elapsed labels change.
+// Absolute coordinates remain UTC instants; elapsed coordinates remain minutes.
 function elapsedLabel(minutes, hours = minutes >= 60, showSeconds = false, fractional = false) {
-  const rawSeconds = Math.max(0, Number((minutes * 60).toFixed(3)));
+  const sign = minutes < 0 ? "−" : "";
+  const rawSeconds = Math.abs(Number((minutes * 60).toFixed(3)));
   const seconds = fractional ? Math.floor(rawSeconds) : Math.round(rawSeconds);
   const fraction = fractional ? (rawSeconds - seconds).toFixed(3).slice(1) : "";
   const pad = value => String(value).padStart(2, "0");
-  return hours ? pad(Math.floor(seconds / 3600)) + ":" + pad(Math.floor(seconds / 60) % 60) + (showSeconds ? ":" + pad(seconds % 60) + fraction : "")
-    : pad(Math.floor(seconds / 60)) + ":" + pad(seconds % 60) + fraction;
+  return sign + (hours ? pad(Math.floor(seconds / 3600)) + ":" + pad(Math.floor(seconds / 60) % 60) + (showSeconds ? ":" + pad(seconds % 60) + fraction : "")
+    : pad(Math.floor(seconds / 60)) + ":" + pad(seconds % 60) + fraction);
 }
-function elapsedDetail(minutes) {
-  return "Elapsed " + elapsedLabel(minutes, minutes >= 60, true) + (minutes >= 60 ? " HH:MM:SS" : " MM:SS") + " · " + (minutes * 60).toFixed(3) + " s";
+function clockMode() { return el("clock").value; }
+function isAbsoluteClock() { return ["utc", "server", "browser"].includes(clockMode()); }
+function realElapsedName() { return metadata.session_kind === "simulated" ? "Real elapsed time" : "Elapsed time"; }
+function elapsedName() { return clockMode() === "simulation_elapsed" ? "Simulation elapsed time" : realElapsedName(); }
+function elapsedDetail(minutes, name = elapsedName()) {
+  if(typeof minutes!=="number"||!Number.isFinite(minutes)) return name+" unavailable";
+  const absolute = Math.abs(minutes);
+  return name + " " + elapsedLabel(minutes, absolute >= 60, true) + (absolute >= 60 ? " HH:MM:SS" : " MM:SS") + " · " + (minutes * 60).toFixed(3) + " s";
 }
 function elapsedAxis(values, range) {
   const finite = values.filter(v => typeof v === "number" && Number.isFinite(v));
@@ -21,7 +28,53 @@ function elapsedAxis(values, range) {
   const fractional = (high - low) * 60 / 6 < 1;
   const tickvals = Array.from({length:7}, (_, i) => low + (high - low) * i / 6);
   return {tickmode:"array", tickvals, ticktext:tickvals.map(v => elapsedLabel(v, hours, showSeconds, fractional)),
-    title:{text:"Virtual elapsed · " + (hours ? (showSeconds ? (fractional ? "HH:MM:SS.sss" : "HH:MM:SS") : "HH:MM") + " (hours may exceed 24)" : (fractional ? "MM:SS.sss" : "MM:SS"))}};
+    title:{text:elapsedName() + " · " + (hours ? (showSeconds ? (fractional ? "HH:MM:SS.sss" : "HH:MM:SS") : "HH:MM") + " (hours may exceed 24)" : (fractional ? "MM:SS.sss" : "MM:SS"))}};
+}
+const browserTimeZone=Intl.DateTimeFormat().resolvedOptions().timeZone||"browser default zone";
+function browserZoneName() { return browserTimeZone; }
+function absoluteZone() {
+  if (clockMode() === "utc") return "UTC";
+  if (clockMode() === "server") return serverTime.available ? serverTime.iana_time_zone : null;
+  return undefined;
+}
+function absoluteTitle() {
+  if (clockMode() === "utc") return "Recorded wall time · UTC";
+  if (clockMode() === "server") return serverTime.available ? `Recorded wall time · Server local · ${serverTime.iana_time_zone}` : "Server local time unavailable";
+  return `Recorded wall time · Browser local · ${browserZoneName()}`;
+}
+const instantFormatters=new Map();
+function instantFormatter(timeZone, precision) {
+  const key=`${timeZone??"browser"}:${precision}`;
+  if(instantFormatters.has(key)) return instantFormatters.get(key);
+  const options={
+    timeZone,
+    year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",
+    hourCycle:"h23",timeZoneName:"short"
+  };
+  if(precision!=="minute") options.second="2-digit";
+  if(precision==="millisecond") options.fractionalSecondDigits=3;
+  const formatter=new Intl.DateTimeFormat("en-CA",options);
+  instantFormatters.set(key,formatter);
+  return formatter;
+}
+function formatWallInstant(value, precision = "millisecond") {
+  if(value===null||value===undefined||value==="") return "unavailable";
+  const instant = new Date(value);
+  if (!Number.isFinite(instant.valueOf())) return "unavailable";
+  const timeZone = absoluteZone();
+  if (clockMode() === "server" && !timeZone) return "server local time unavailable";
+  try {
+    return instantFormatter(timeZone,precision).format(instant);
+  } catch {
+    return "time-zone conversion unavailable";
+  }
+}
+function wallAxis(range) {
+  const [low, high] = range;
+  const span=high-low;
+  const precision=span<=10000?"millisecond":span<=21600000?"second":"minute";
+  const tickvals=Array.from({length:7},(_,index)=>low+(high-low)*index/6);
+  return {tickmode:"array",tickvals,ticktext:tickvals.map(value=>formatWallInstant(value,precision)),title:{text:absoluteTitle()}};
 }
 const sharedView = {mode:"full",range:null,width:null,wall:false};
 const chartStates = Object.fromEntries(["chart","voltage-chart","truth-chart","token-chart"].map(id=>[id,{busy:0,queue:Promise.resolve()}]));
@@ -35,7 +88,15 @@ function timeNumber(value, wall) {
   const rendered=String(value).replace(" ","T");
   return Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(rendered)?rendered:rendered+"Z");
 }
-function modelX(row) {return sharedView.wall ? (row.recorded_at || null) : num(row.virtual_time_s)===null ? null : row.virtual_time_s/60;}
+function realElapsedMinutes(value) {
+  const origin=Date.parse(metadata.created_at),instant=Date.parse(value);
+  return Number.isFinite(origin)&&Number.isFinite(instant)?(instant-origin)/60000:null;
+}
+function modelX(row) {
+  if(isAbsoluteClock()) return row.recorded_at||null;
+  if(clockMode()==="real_elapsed") return realElapsedMinutes(row.recorded_at);
+  return num(row.virtual_time_s)===null?null:row.virtual_time_s/60;
+}
 function knownTimes() {
   return [...events.map(xFor),...(metadata.session_kind==="simulated"?truthRows.map(modelX):[])].filter(v=>v!==null);
 }
@@ -73,10 +134,10 @@ function guardedPlot(id,operation) {
   state.queue=next.catch(()=>{});return next;
 }
 function viewLayout(id,layout) {
-  sharedView.wall=el("clock").value==="wall";
+  sharedView.wall=isAbsoluteClock();
   const values=knownTimes(),range=timeRange(sharedView,values),count=viewIds(id)[2];
   const rendered=sharedView.wall?range.map(v=>new Date(v).toISOString()):range;
-  const ticks=sharedView.wall?{tickmode:"auto",tickvals:null,ticktext:null,title:{text:"Recorded wall time · UTC"}}:elapsedAxis(values,range);
+  const ticks=sharedView.wall?wallAxis(range):elapsedAxis(values,range);
   for(let i=1;i<=count;i++) {
     const key=i===1?"xaxis":"xaxis"+i;
     Object.assign(layout[key],gridStyle,ticks,{type:sharedView.wall?"date":"linear",range:rendered,autorange:false});
@@ -116,7 +177,7 @@ function applyY(id,layout,traces) {
   }
 }
 function redrawPublic() {
-  const next=redrawQueue.then(async()=>{sharedView.wall=el("clock").value==="wall";await draw();await drawVoltage();await drawTokens();});
+  const next=redrawQueue.then(async()=>{sharedView.wall=isAbsoluteClock();await draw();await drawVoltage();await drawTokens();});
   redrawQueue=next.catch(()=>{});return next;
 }
 function redrawAll() {
@@ -151,7 +212,7 @@ for(const link of document.querySelectorAll(".operator-unlock")) {
 const selectedRun = new URLSearchParams(window.location.search).get("run") || "";
 const runQuery = "run=" + encodeURIComponent(selectedRun);
 const PUBLIC_PAGE_SIZE=1000,PUBLIC_PAGE_WORKERS=4,HISTORY_WINDOW_SIZE=200;
-let generation = -1, metadata = {};
+let generation = -1, metadata = {}, serverTime = {available:false,iana_time_zone:null};
 let events = [], observations = [], controls = [], decisions = [];
 let chartReady = false, clockInitializedFor = null;
 const byId = new Map();
@@ -210,7 +271,45 @@ function placementLabel(row) {
   if (!row.observed_at && event.virtual_time_basis!=="observed_time_origin") return "Placed at same-call result time; exact request time unavailable (not a measurement)";
   return "Returned observation time";
 }
-const xFor = row => el("clock").value === "virtual" ? virtualMinutes(row) : row.recorded_at;
+function xFor(row) {
+  if(isAbsoluteClock()) return row.recorded_at||null;
+  if(clockMode()==="real_elapsed") return realElapsedMinutes(row.recorded_at);
+  return virtualMinutes(row);
+}
+function displayTime(row) {
+  const value=xFor(row);
+  if(value===null||value===undefined) return clockMode()==="simulation_elapsed"?"Simulation elapsed unavailable":"Time unavailable";
+  return isAbsoluteClock()?formatWallInstant(value):elapsedDetail(value);
+}
+function displayInstant(value) {
+  if(!value) return "not available";
+  if(isAbsoluteClock()) return formatWallInstant(value);
+  if(clockMode()==="real_elapsed") {
+    const elapsed=realElapsedMinutes(value);
+    return elapsed===null?"real elapsed unavailable":elapsedDetail(elapsed,realElapsedName());
+  }
+  return formatUtcInstant(value)+" wall instant";
+}
+function formatUtcInstant(value) {
+  if(value===null||value===undefined||value==="") return "unavailable";
+  const instant=new Date(value);
+  if(!Number.isFinite(instant.valueOf())) return "unavailable";
+  return instantFormatter("UTC","millisecond").format(instant);
+}
+function configureClockOptions() {
+  const serverOption=el("clock").querySelector('option[value="server"]');
+  serverOption.disabled=!serverTime.available;
+  serverOption.textContent=serverTime.available?`Server local time · ${serverTime.iana_time_zone}`:"Server local time · unavailable on this host";
+  el("clock").querySelector('option[value="browser"]').textContent=`Browser local time · ${browserZoneName()}`;
+  const realOption=el("clock").querySelector('option[value="real_elapsed"]');
+  const realAvailable=Number.isFinite(Date.parse(metadata.created_at));
+  realOption.disabled=!realAvailable;
+  realOption.textContent=realAvailable?(metadata.session_kind==="simulated"?"Real elapsed time · since run start":"Elapsed time · since run start"):"Elapsed time · run creation time unavailable";
+  const simulationOption=el("clock").querySelector('option[value="simulation_elapsed"]');
+  const simulated=metadata.session_kind==="simulated";
+  simulationOption.hidden=!simulated;simulationOption.disabled=!simulated;
+  if(el("clock").selectedOptions[0]?.disabled) el("clock").value="browser";
+}
 
 async function loadExactEvent(id) {
   try {
@@ -222,7 +321,7 @@ async function loadExactEvent(id) {
     return data.event;
   } catch {return null;}
 }
-async function selectEvent(id, jump = false) {
+async function selectEvent(id, jump = false, scroll = true) {
   let event = byId.get(id);
   if (!event) {
     el("raw").textContent = `Loading referenced event ${id}…`;
@@ -241,7 +340,7 @@ async function selectEvent(id, jump = false) {
   const supportingIds = decision?.basis_event_ids ?? [];
   const args = event.requested_arguments || {};
   if(event.kind === "external_change_detected") {
-    readable.append(text("p", `An external setting change was detected between ${event.observation_interval_started_at || "an unknown prior time"} and ${event.detected_at || event.recorded_at}. Its exact action time, operator and reason are unknown.`));
+    readable.append(text("p", `An external setting change was detected between ${displayInstant(event.observation_interval_started_at)} and ${displayInstant(event.detected_at || event.recorded_at)}. Its exact action time, operator and reason are unknown.`));
     readable.append(text("p", (event.changed_fields || []).map(key => `${key}: ${JSON.stringify(event.previous_values?.[key])} → ${JSON.stringify(event.detected_values?.[key])}`).join(" · ")));
   }
   readable.append(text("p", usageText(decision?.token_usage_id ? {usage_id:decision.token_usage_id,total_tokens:decision.total_tokens,input_tokens:decision.input_tokens,output_tokens:decision.output_tokens,cached_input_tokens:decision.cached_input_tokens,model:decision.token_model} : null), "muted"));
@@ -254,8 +353,10 @@ async function selectEvent(id, jump = false) {
   if(event.error) readable.append(text("p","MCP error: "+event.error,"error"));
   if (num(args.target_current_a) !== null) readable.append(text("p", "Requested load-current target: " + fmt(args.target_current_a) + " A"));
   if (num(args.expected_current_a) !== null) readable.append(text("p", "Expected previous load-current setting: " + fmt(args.expected_current_a) + " A (must match before the change)."));
-  readable.append(text("p", "MCP receipt: " + (event.received_at || event.recorded_at) + " · Source observation: " + (observations.find(r => r.event_id === id)?.observed_at || event.observed_at || "not available")));
-  if (el("clock").value === "virtual") readable.append(text("p", virtualMinutes(event) === null ? "Virtual placement unavailable; real decision/receipt timestamps remain unchanged." : "Virtual placement: " + placementLabel(event), "muted"));
+  const sourceObservedAt=observations.find(r => r.event_id === id)?.observed_at || event.observed_at;
+  readable.append(text("p", "Decision: " + displayInstant(event.decision_at) + " · MCP receipt: " + displayInstant(event.received_at || event.recorded_at) + " · Result recorded: " + displayInstant(event.recorded_at)));
+  readable.append(text("p", "Source observation: " + (!sourceObservedAt ? "not available" : metadata.session_kind === "simulated" ? sourceObservedAt + " · synthetic model time, not a real wall date" : displayInstant(sourceObservedAt))));
+  if (clockMode() === "simulation_elapsed") readable.append(text("p", virtualMinutes(event) === null ? "Simulation elapsed placement unavailable; real decision/receipt UTC instants remain unchanged." : "Simulation placement: " + elapsedDetail(virtualMinutes(event),"Simulation elapsed time") + " · " + placementLabel(event), "muted"));
   const links = text("div", "", "links");
   for (const related of events.filter(e => (event.call_id && e.call_id === event.call_id) || (event.decision_id && e.decision_id === event.decision_id))) {
     if (related.event_id !== id) links.append(eventButton(related.event_id, shortId(related.event_id) + " " + outcome(related), false));
@@ -274,18 +375,18 @@ measured_parallel_load_current_a: "Measured combined current (CH1 + CH2): " + va
 output_enabled: "Output: " + (value ? "ON" : "OFF")
 })[key]).join(" · ")));
   el("raw").textContent = JSON.stringify(event, null, 2);
-  el("selection-label").textContent = `${shortId(id)} · Recorded ${event.recorded_at} · Full ID in dashboard record fields`;
+  el("selection-label").textContent = `${shortId(id)} · Recorded ${displayInstant(event.recorded_at)} · Full ID in dashboard record fields`;
   if (jump && chartReady) {
     const at = xFor(event);
     if (at !== null) {
-      const range = el("clock").value === "virtual" ? [Math.max(0, at - 1), at + 1] : [new Date(Date.parse(at) - 30000).toISOString(), new Date(Date.parse(at) + 30000).toISOString()];
+      const range = isAbsoluteClock() ? [new Date(Date.parse(at) - 30000).toISOString(), new Date(Date.parse(at) + 30000).toISOString()] : [Math.max(0, at - 1), at + 1];
       sharedView.mode="fixed";el("time-view").value="fixed";
       sharedView.range=range.map(v=>timeNumber(v,sharedView.wall));
       sharedView.width=sharedView.range[1]-sharedView.range[0];
       redrawAll().catch(showViewError);
     }
   }
-  el("selected").scrollIntoView({ behavior: "smooth", block: "start" });
+  if(scroll) el("selected").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function eventButton(id, label, jump = true) {
@@ -326,7 +427,7 @@ async function drawTokens() {
   const trace=(field,name,panel)=>({type:"scatter",mode:"lines+markers",name,
     x:rows.map(xFor),y:rows.map(r=>r[field]),
     xaxis:panel===1?"x":"x2",yaxis:panel===1?"y":"y2",
-    customdata:rows.map(r=>r.event_id),text:rows.map(r=>shortId(r.event_id)+"<br>Usage ID: "+r.token_usage_id+"<br>"+(sharedView.wall?xFor(r):elapsedDetail(xFor(r)))+"<br>"+(sharedView.wall?"Recorded wall time":placementLabel(r))),
+    customdata:rows.map(r=>r.event_id),text:rows.map(r=>shortId(r.event_id)+"<br>Usage ID: "+r.token_usage_id+"<br>"+displayTime(r)+"<br>"+(clockMode()==="simulation_elapsed"?placementLabel(r):isAbsoluteClock()?absoluteTitle():"Run creation is the real wall elapsed origin")),
     hovertemplate:"%{text}<br>%{y} reported tokens<extra>"+name+"</extra>"});
   const traces=[trace("total_tokens","Tokens per reported decision",1),trace("cumulative_tokens","Cumulative reported tokens",2)];
   const layout={
@@ -376,13 +477,14 @@ function updatePanels() {
   el("actual").textContent = power ? `${fmt(power.measured_parallel_load_current_a)} A` : "—";
   el("output").textContent = power?.output_enabled === true ? "ON" : power?.output_enabled === false ? "OFF" : "—";
   const lastObservation=observations.at(-1),observedAgo=lastObservation?Math.max(0,(Date.now()-Date.parse(lastObservation.recorded_at))/1000):null;
-  el("observation-age").textContent=lastObservation?`Last source observation: ${lastObservation.observed_at||"unavailable"} · Received/recorded ${Number.isFinite(observedAgo)?Math.floor(observedAgo)+" s ago":"at an unavailable time"}. This page reads MCP records; it does not trigger measurements.`:"No observation yet. This dashboard does not sample instruments.";
+  const sourceAgeLabel=lastObservation?.observed_at ? (metadata.session_kind==="simulated" ? `${lastObservation.observed_at} · synthetic model time, not a real wall date` : displayInstant(lastObservation.observed_at)) : "unavailable";
+  el("observation-age").textContent=lastObservation?`Last source observation: ${sourceAgeLabel} · Received/recorded ${Number.isFinite(observedAgo)?Math.floor(observedAgo)+" s ago":"at an unavailable time"}. This page reads MCP records; it does not trigger measurements.`:"No observation yet. This dashboard does not sample instruments.";
   const history=displayedHistory();
   const displayedDecisions=history.filter(row=>row.kind==="decision");
   el("decisions").replaceChildren();
   for (const row of [...displayedDecisions].reverse()) {
     const card = text("article", "", "card"); card.dataset.record = row.event_id;
-    card.append(text("small", `${shortId(row.event_id)} · ${actor(row)} decision: ${row.decision_at || "not supplied"} · MCP receipt: ${row.received_at || row.recorded_at}`), text("h3", row.chosen_action), text("p", row.rationale_summary));
+    card.append(text("small", `${shortId(row.event_id)} · ${actor(row)} decision: ${displayInstant(row.decision_at)} · MCP receipt: ${displayInstant(row.received_at || row.recorded_at)}`), text("h3", row.chosen_action), text("p", row.rationale_summary));
     card.append(text("p", usageText(row.token_usage_id ? {usage_id:row.token_usage_id,total_tokens:row.total_tokens,input_tokens:row.input_tokens,output_tokens:row.output_tokens,cached_input_tokens:row.cached_input_tokens,model:row.token_model}:null), "muted"));
     if (row.background) card.append(text("p", row.background, "muted"));
     if (row.confidence_claim) card.append(text("p", `Self-reported confidence: ${row.confidence_value ?? "unknown"} · Claim: ${row.confidence_claim}`, "muted"));
@@ -396,7 +498,7 @@ function updatePanels() {
   for (const event of history.filter(e => e.kind !== "decision").reverse()) {
     const failed = event.kind === "call_error" || event.is_error === true;
     const line = text("div", "", "event"); line.dataset.record = event.event_id;
-    line.append(eventButton(event.event_id, `${shortId(event.event_id)} · ${event.kind === "call_intent" ? actor(event) + " → MCP" : "MCP → " + actor(event)} · ${toolLabel(event.tool)} · ${outcome(event)} · ${event.recorded_at}`));
+    line.append(eventButton(event.event_id, `${shortId(event.event_id)} · ${event.kind === "call_intent" ? actor(event) + " → MCP" : "MCP → " + actor(event)} · ${toolLabel(event.tool)} · ${outcome(event)} · ${displayTime(event)}`));
     if (failed) line.classList.add("error");
     el("events").append(line);
   }
@@ -430,7 +532,7 @@ async function draw() {
       xaxis: panel === 1 ? "x" : `x${panel}`, yaxis: panel === 1 ? "y" : `y${panel}`,
       line: { color, width: 2, dash, shape: field.includes("setpoint") || field.includes("limit") ? "hv" : "linear" },
       marker: { size: 4 }, connectgaps: false, customdata: rows.map(r => r.event_id),
-      text: rows.map(r => shortId(r.event_id) + "<br>" + (axis === "virtual" ? elapsedDetail(xFor(r)) : xFor(r))), hovertemplate: "%{text}<br>%{y}<extra>" + name + "</extra>" };
+      text: rows.map(r => shortId(r.event_id) + "<br>" + displayTime(r)), hovertemplate: "%{text}<br>%{y}<extra>" + name + "</extra>" };
   }
   const traces = [
     trace("pressure_mbar", "Observed total pressure · mbar", "#e1c77c", 1, r => r.observation_kind === "pressure"),
@@ -440,10 +542,10 @@ async function draw() {
     trace("measured_parallel_load_current_a", "Measured CH1 + CH2 · A", "#ffc875", 2, r => r.observation_kind === "power"),
   ];
   const requested = controls.filter(r => r.phase === "call_intent" && xFor(r) !== null && num(r.requested_load_current_a) !== null);
-  traces.push({ type: "scatter", mode: "markers", name: "Requested load target · A", x: requested.map(xFor), y: requested.map(r => r.requested_load_current_a), xaxis: "x2", yaxis: "y2", marker: { color: "#efbc72", symbol: "diamond-open", size: 9 }, customdata: requested.map(r => r.event_id), text: requested.map(r => shortId(r.event_id)), hovertemplate: "%{text}<br>Requested load: %{y} A<extra></extra>" });
+  traces.push({ type: "scatter", mode: "markers", name: "Requested load target · A", x: requested.map(xFor), y: requested.map(r => r.requested_load_current_a), xaxis: "x2", yaxis: "y2", marker: { color: "#efbc72", symbol: "diamond-open", size: 9 }, customdata: requested.map(r => r.event_id), text: requested.map(r => shortId(r.event_id)+"<br>"+displayTime(r)), hovertemplate: "%{text}<br>Requested load: %{y} A<extra></extra>" });
   for (const [status, y, color, symbol, label] of [["intent", 3, "#efbc72", "diamond-open", "Requested"], ["succeeded", 2, "#6edbc9", "circle", "Completed"], ["not_executed", 1, "#cbb9ff", "square-open", "Not executed"], ["failed", 0, "#fb978d", "x", "Error / state uncertain"]]) {
     const rows = controls.filter(r => (status === "not_executed" ? outcome(byId.get(r.event_id)) === "Not executed" : r.status === status && outcome(byId.get(r.event_id)) !== "Not executed") && xFor(r) !== null);
-    traces.push({ type: "scatter", mode: "markers", name: label, x: rows.map(xFor), y: rows.map(() => y), xaxis: "x3", yaxis: "y3", marker: { color, symbol, size: 10 }, customdata: rows.map(r => r.event_id), text: rows.map(r => `${shortId(r.event_id)} · ${toolLabel(r.tool)}<br>${outcome(byId.get(r.event_id))}<br>${r.error || ""}${el("clock").value === "virtual" && !r.observed_at ? "<br>Position: "+placementLabel(r) : ""}`), hovertemplate: "%{text}<extra></extra>" });
+    traces.push({ type: "scatter", mode: "markers", name: label, x: rows.map(xFor), y: rows.map(() => y), xaxis: "x3", yaxis: "y3", marker: { color, symbol, size: 10 }, customdata: rows.map(r => r.event_id), text: rows.map(r => `${shortId(r.event_id)} · ${toolLabel(r.tool)}<br>${displayTime(r)}<br>${outcome(byId.get(r.event_id))}<br>${r.error || ""}${clockMode() === "simulation_elapsed" && !r.observed_at ? "<br>Position: "+placementLabel(r) : ""}`), hovertemplate: "%{text}<extra></extra>" });
   }
   const simulated=metadata.session_kind==="simulated";
   const modelRows=simulated&&operatorAuthorized?truthRows.filter(r=>modelX(r)!==null):[];
@@ -451,7 +553,7 @@ async function draw() {
     if(simulated&&operatorAuthorized) traces.push({type:"scatter",mode:"lines+markers",name,x:modelRows.map(modelX),
       y:modelRows.map(r=>num(r.state[field])===null?null:r.state[field]*100),xaxis:"x4",yaxis:"y4",
       line:{color,width:2},marker:{size:4},connectgaps:false,customdata:modelRows.map(r=>({model_sequence:r.sequence})),
-      text:modelRows.map(r=>"Model snapshot S"+r.sequence+"<br>"+(sharedView.wall?modelX(r):elapsedDetail(r.virtual_time_s/60))),
+      text:modelRows.map(r=>"Model snapshot S"+r.sequence+"<br>"+(isAbsoluteClock()?formatWallInstant(modelX(r)):clockMode()==="real_elapsed"?elapsedDetail(modelX(r),realElapsedName()):elapsedDetail(r.virtual_time_s/60,"Simulation elapsed time"))),
       hovertemplate:"%{text}<br>%{y:.2f}% of own initial inventory<extra>"+name+"</extra>"});
   }
   el("inventory-note").hidden=!simulated;
@@ -489,7 +591,7 @@ async function drawVoltage() {
   const rows=observations.filter(r=>r.observation_kind==="power"&&xFor(r)!==null);
   const traces=[["native_ch1_voltage_setpoint_v","Native CH1 voltage limit · V","#c7a4e9"],["native_ch1_measured_voltage_v","Measured native CH1 voltage · V","#80c8e5"],["measured_ch2_voltage_v","Measured CH2 voltage · V","#a8d98c"]].map(([field,name,color])=>({
     type:"scatter",mode:"lines+markers",name,x:rows.map(xFor),y:rows.map(r=>num(r[field])),line:{color,width:2,shape:field.includes("setpoint")?"hv":"linear"},marker:{size:4},connectgaps:false,
-    customdata:rows.map(r=>r.event_id),text:rows.map(r=>shortId(r.event_id)+"<br>"+(sharedView.wall?xFor(r):elapsedDetail(xFor(r)))),
+    customdata:rows.map(r=>r.event_id),text:rows.map(r=>shortId(r.event_id)+"<br>"+displayTime(r)),
     hovertemplate:"%{text}<br>%{y} V<extra>"+name+"</extra>"}));
   const layout={paper_bgcolor:"#152330",plot_bgcolor:"#152330",font:{color:"#c9d8e5"},height:300,margin:{t:50,r:30,b:50,l:110},
     uirevision:metadata.session_id+":"+generation+":"+sharedView.wall,legend:{orientation:"h",y:1.2},xaxis:{anchor:"y",automargin:true},yaxis:{title:{text:"Voltage · V"},automargin:true}};
@@ -524,9 +626,11 @@ function resetPublicState(nextGeneration=-1) {
 function applyPublicContext(data,changed) {
   el("view-mode").textContent=data.recording_view==="saved_recording"?"SAVED RUN":"LIVE VIEW · current process";
   metadata=data.metadata||metadata;
+  serverTime=data.server_time||{available:false,iana_time_zone:null,message:"Server local time is unavailable."};
+  configureClockOptions();
   runManagement=data.run_management||{};updateManagement();
   if(metadata.session_id&&clockInitializedFor!==metadata.session_id) {
-    el("clock").value=metadata.session_kind==="simulated"&&metadata.observed_time_origin?"virtual":"wall";
+    el("clock").value=metadata.session_kind==="simulated"?"simulation_elapsed":"browser";
     resetTimeView("chart");resetTimeView("truth-chart");clockInitializedFor=metadata.session_id;
   }
   const simulated=metadata.session_kind==="simulated",live=metadata.session_kind==="live";
@@ -535,7 +639,7 @@ function applyPublicContext(data,changed) {
   el("decision-heading").textContent="Decisions and reasons · attributed per record";
   el("title").textContent=metadata.label||"Observations, actions, decisions";
   el("provenance").textContent=metadata.session_kind?`Initial caller: ${actor()} · Individual records identify agent, human or independent MCP sampling.`:"Waiting to learn who made the requests.";
-  el("session-details").textContent=`Session ${metadata.session_id||"not available"} · ${metadata.session_kind||"unknown source"}. ${live?"Hardware-source records do not establish current output state.":"Synthetic, uncalibrated data; not hardware evidence. Scripted demonstrations are not AI blind runs."}`;
+  el("session-details").textContent=`Session ${metadata.session_id||"not available"} · ${metadata.session_kind||"unknown source"} · Run created ${metadata.created_at?formatUtcInstant(metadata.created_at):"not recorded"}. ${live?"Hardware-source records do not establish current output state.":"Synthetic, uncalibrated data; not hardware evidence. Scripted demonstrations are not AI blind runs."} ${serverTime.message||""}`;
   el("decision-caption").textContent="Submitted reasons in the displayed 200-record window, with links to the readings used.";
   el("provenance").className=metadata.session_kind&&!live?"banner synthetic":"banner";
   el("source").textContent=`${data.recording_view==="saved_recording"?"SAVED RECORDING / REPLAY VIEW":"PROCESS SESSION RECORDS"} · File checked ${new Date().toISOString()} · ${changed?"Records updated":"No new records this check"} · Read-only source: ${data.source||"not configured"}`;
@@ -651,12 +755,12 @@ async function drawTruth(data,force=false) {
     truthRevision = revision;
     if (data.status !== "ready" || !allRows.length) { Plotly.purge("truth-chart"); return; }
     const p = data.parameters || rows[0]?.parameters || {};
-    el("truth-time-note").textContent=sharedView.wall ? (allRows.length-rows.length)+" model snapshots lack recorded wall time and are omitted; virtual view retains them." : "Model and public elapsed-time axes are synchronized. Synthetic observed_at is never treated as real wall time.";
+    el("truth-time-note").textContent=isAbsoluteClock() ? (allRows.length-rows.length)+" model snapshots lack recorded wall time and are omitted; Simulation elapsed time retains snapshots with model time." : clockMode()==="real_elapsed" ? "Real elapsed time uses each snapshot recording time relative to run creation; it is not model time." : "Model and public Simulation elapsed time axes are synchronized. Synthetic observed_at is never treated as real wall time.";
     el("truth-parameters").textContent = "Synthetic loading: initial Rb " + fmt(p.initial_rb_effective_units) + " units; initial impurity " + fmt(p.initial_impurity_effective_units) + " units; ratio " + fmt(p.initial_rb_to_impurity_effective_ratio) + " (not measured mass/composition). Fixed resistance " + fmt(p.resistance_ohm) + " Ω. Thermal state is normalized, not kelvin.";
     const series = (field,name,color,panel,scale=1) => ({type:"scatter",mode:"lines",name,
       x:rows.map(modelX),y:rows.map(r=>num(r.state[field]) === null ? null : r.state[field]*scale),
       xaxis:panel === 1 ? "x" : "x"+panel,yaxis:panel === 1 ? "y" : "y"+panel,
-      line:{color,width:2},connectgaps:false,customdata:rows.map(r=>r.sequence),text:rows.map(r=>"Model snapshot S"+r.sequence+"<br>"+(sharedView.wall?modelX(r):elapsedDetail(r.virtual_time_s/60))),
+      line:{color,width:2},connectgaps:false,customdata:rows.map(r=>r.sequence),text:rows.map(r=>"Model snapshot S"+r.sequence+"<br>"+(isAbsoluteClock()?formatWallInstant(modelX(r)):clockMode()==="real_elapsed"?elapsedDetail(modelX(r),realElapsedName()):elapsedDetail(r.virtual_time_s/60,"Simulation elapsed time"))),
       hovertemplate:"%{text}<br>%{y}<extra>"+name+"</extra>"});
     const traces = [
       series("rb_release_rate_effective_units_per_s","Rb release · synthetic units/s","#e5bc75",1),
@@ -689,12 +793,18 @@ async function drawTruth(data,force=false) {
 function selectModel(sequence) {
   if(!operatorAuthorized) return;
   const row=truthRows.find(r=>r.sequence===sequence);if(!row) return;
-  el("truth-selected").textContent="Model snapshot S"+row.sequence+" · "+elapsedDetail(row.virtual_time_s/60)+" · Rb remaining "+fmt(num(row.state.rb_remaining_fraction)===null?null:row.state.rb_remaining_fraction*100)+"% · Impurity remaining "+fmt(num(row.state.impurity_remaining_fraction)===null?null:row.state.impurity_remaining_fraction*100)+"%. Each relative to its own initial inventory; not a supporting observation.";
+  el("truth-selected").textContent="Model snapshot S"+row.sequence+" · "+(clockMode()==="simulation_elapsed"?elapsedDetail(row.virtual_time_s/60,"Simulation elapsed time"):isAbsoluteClock()?formatWallInstant(row.recorded_at):elapsedDetail(realElapsedMinutes(row.recorded_at),realElapsedName()))+" · Rb remaining "+fmt(num(row.state.rb_remaining_fraction)===null?null:row.state.rb_remaining_fraction*100)+"% · Impurity remaining "+fmt(num(row.state.impurity_remaining_fraction)===null?null:row.state.impurity_remaining_fraction*100)+"%. Each relative to its own initial inventory; not a supporting observation.";
   el("truth-raw").textContent=JSON.stringify(row,null,2);el("truth-selected").classList.add("highlight");
   el("truth-selected").scrollIntoView({behavior:"smooth",block:"center"});
 }
 
-el("clock").addEventListener("change",()=>{sharedView.wall=el("clock").value==="wall";resetTimeView();redrawAll().catch(showViewError);});
+el("clock").addEventListener("change",()=>{
+  sharedView.wall=isAbsoluteClock();resetTimeView();updatePanels();
+  if(selectedId) selectEvent(selectedId,false,false).catch(showViewError);
+  el("truth-selected").textContent="Time axis changed; select a model snapshot to refresh its displayed time.";
+  el("truth-selected").classList.remove("highlight");el("truth-raw").textContent="";
+  redrawAll().catch(showViewError);
+});
 for(const id of Object.keys(chartStates)) {
   const [selectId]=viewIds(id);
   el(selectId).addEventListener("change",()=>{

@@ -14,6 +14,7 @@ dependencies = [
     "pydantic>=2.12,<3",
     "py-siglent-spd3000",
     "coolname==5.0.0",
+    "tzlocal>=5,<6",
 ]
 
 [tool.uv.sources]

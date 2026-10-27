@@ -153,9 +153,15 @@ next physical interaction. Results include `timing` (requested, wall, actual and
 cumulative virtual seconds); domain errors after advancement carry
 `_meta.simulation_timing`. Invalid interval/context does not advance the model.
 No intermediate gauge samples are invented, and physics equations are unchanged.
-The dashboard formats elapsed axes as MM:SS below one hour or HH:MM for longer
-runs (hours do not wrap), adding seconds or milliseconds when zoomed closely.
-Hover retains precise elapsed seconds. CSV units stay unchanged.
+All dashboard charts share UTC, current-server-local, browser-local and elapsed
+views. Hardware defaults to the named browser zone and offers elapsed time from
+the recorded run-creation instant. Simulation defaults to clearly labelled
+Simulation elapsed time and also offers real elapsed time from run creation.
+Server-local display uses the current hosting server's IANA zone; it is disabled
+rather than guessed when that zone is unavailable. UTC records are never
+rewritten. Elapsed axes use MM:SS below one hour or HH:MM for longer runs (hours
+do not wrap), adding seconds or milliseconds when zoomed closely. CSV units stay
+unchanged.
 The old developer stdio command retains its original 10.0 V default and explicit
 environment overrides. HTTP simulation does not import hardware adapters or read
 their settings/authentication. Installed dependency code is not device access.

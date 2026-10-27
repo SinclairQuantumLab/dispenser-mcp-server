@@ -8,6 +8,7 @@ import threading
 from html import escape
 from pathlib import Path
 from typing import Any, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
@@ -19,6 +20,7 @@ from starlette.responses import (
     Response,
 )
 from starlette.routing import BaseRoute, Route
+from tzlocal import get_localzone_name
 
 from dispenser_conditioning_mcp.dashboard_access import DashboardAccess
 from dispenser_conditioning_mcp.session_records import (
@@ -48,6 +50,34 @@ _OVERVIEW_NUMERIC_FIELDS = (
 )
 
 
+def server_time_display() -> dict[str, Any]:
+    """Describe the current dashboard host zone without changing stored UTC."""
+    try:
+        name = get_localzone_name()
+        if not name:
+            raise ValueError("Local IANA time zone is unavailable")
+        ZoneInfo(name)
+    except (OSError, ValueError, ZoneInfoNotFoundError):
+        return {
+            "scope": "current_dashboard_host",
+            "available": False,
+            "iana_time_zone": None,
+            "message": (
+                "Server local time is unavailable because this host has no "
+                "usable IANA time-zone configuration."
+            ),
+        }
+    return {
+        "scope": "current_dashboard_host",
+        "available": True,
+        "iana_time_zone": name,
+        "message": (
+            "Server local time uses the current dashboard host, not an inferred "
+            "historical acquisition location."
+        ),
+    }
+
+
 def dashboard_routes(
     directory: Path,
     *,
@@ -59,6 +89,7 @@ def dashboard_routes(
     from dispenser_conditioning_mcp.run_history import RunCatalog
 
     access = access or DashboardAccess()
+    server_display = server_time_display()
     catalog = RunCatalog(directory, protect_current=not replay, root=run_root)
     directory = directory.resolve()
     readers: dict[Path, tuple[SessionTail, SimulationObserverReader]] = {}
@@ -164,6 +195,7 @@ def dashboard_routes(
             "current": not replay and tail.directory == directory,
         }
         snapshot["operator_authorized"] = access.authorized(request)
+        snapshot["server_time"] = dict(server_display)
         snapshot["recording_view"] = (
             "saved_recording" if saved else "process_session"
         )
