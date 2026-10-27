@@ -9,6 +9,7 @@
   const hardwareFields = ["hicube_host", "hicube_port", "hicube_timeout_s", "siglent_identifier", "siglent_timeout_s", "siglent_minimum_command_interval_ms"];
   const hardwareInput = field => $(field);
   const simulationFields = ["seed", "scenario"];
+  const commandLimitFields = ["compliance_voltage_v", "max_load_current_A"];
   const active = () => runtime?.active_run || null;
   const binding = () => active()?.run_binding || runtime?.run_binding || null;
   const say = (id, message, error = false) => {
@@ -43,7 +44,21 @@
     $("run-fields").disabled = !authorized || !active() || busy;
     $("stop-run").disabled = !authorized || !active() || busy || !$("stop-ack").checked;
     $("access-hint").hidden = authorized;
+    updateCommandFields();
     say("settings-hint", !authorized ? "Log in to view and edit settings. Public status does not expose simulation setup or credentials." : active() ? "A run is active. Use the controls below for an authority/interval change. End this recording before changing its backend or instrument configuration." : "Save changes, check the saved configuration, then explicitly start a new recording. Nothing here enables output automatically.");
+  }
+  function updateCommandFields() {
+    const enabled = $("control_enabled").checked;
+    for (const field of commandLimitFields) $(field).disabled = !enabled;
+    let message;
+    if (!enabled) {
+      message = "Recording only: this server will not execute authenticated human web or agent equipment commands. Saved command values are retained for later use and may still appear in readback metadata. Hardware changes made from the front panel or another app are observed but are not constrained by these MCP settings.";
+    } else if ($("authority_mode").value === "human_learning") {
+      message = "Human web commands enabled: authenticated dashboard commands use these limits. Agent equipment commands remain blocked by Human · record and learn authority. Hardware changes made from the front panel or another app are not constrained by these MCP settings.";
+    } else {
+      message = "Agent commands enabled: run-bound agent commands use these limits. To issue human dashboard commands, first switch authority to Human \u00b7 record and learn; the same limits then apply. Hardware changes made from the front panel or another app are not constrained by these MCP settings.";
+    }
+    say("control-settings-hint", message);
   }
   function backendVisibility() {
     $("hardware-settings").hidden = $("backend").value !== "hardware";
